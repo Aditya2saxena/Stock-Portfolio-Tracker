@@ -15,12 +15,9 @@ const allowedOrigins = process.env.CLIENT_URL
   ? [process.env.CLIENT_URL, 'http://localhost:3000', 'http://127.0.0.1:3000']
   : '*';
 
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  })
-);
+app.use(cors({
+  origin: ['http://localhost:3000', 'https://stock-portfolio-tracker-a3lu064ol-aditya-465e.vercel.app'],
+}));
 
 app.use(express.json());
 

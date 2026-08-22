@@ -17,9 +17,8 @@ const server = http.createServer(app);
 const clientOrigin = process.env.CLIENT_URL || 'http://localhost:3000';
 const io = new Server(server, {
   cors: {
-    origin: [clientOrigin, 'http://localhost:3000', 'http://127.0.0.1:3000'],
+    origin: ['http://localhost:3000', 'https://stock-portfolio-tracker-a3lu064ol-aditya-465e.vercel.app'],
     methods: ['GET', 'POST'],
-    credentials: true,
   },
 });
 
