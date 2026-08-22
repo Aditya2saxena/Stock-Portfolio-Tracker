@@ -1,4 +1,4 @@
-const { getStockPrice } = require('../services/stockService');
+const { getStockPrice, searchStocksService } = require('../services/stockService');
 
 exports.getStock = async (req, res) => {
   try {
@@ -10,6 +10,19 @@ exports.getStock = async (req, res) => {
     }
 
     res.json(stockData);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+exports.searchStocks = async (req, res) => {
+  try {
+    const { query } = req.query;
+    if (!query) {
+      return res.json([]);
+    }
+    const results = await searchStocksService(query);
+    res.json(results);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

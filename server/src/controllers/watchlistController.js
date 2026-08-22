@@ -33,14 +33,28 @@ exports.getWatchlist = async (req, res) => {
 
     const watchlistWithPrices = await Promise.all(
       watchlistItems.map(async (item) => {
-        const stockData = await getStockPrice(item.stockSymbol);
-        return {
-          _id: item._id,
-          stockSymbol: item.stockSymbol,
-          currentPrice: stockData.currentPrice,
-          change: stockData.change,
-          percentChange: stockData.percentChange,
-        };
+        try {
+          const stockData = await getStockPrice(item.stockSymbol);
+          return {
+            _id: item._id,
+            stockSymbol: item.stockSymbol,
+            currentPrice: stockData.currentPrice,
+            change: stockData.change,
+            percentChange: stockData.percentChange,
+            dataSource: stockData.dataSource,
+          };
+        } catch (error) {
+          // Is stock ka data bilkul nahi mila — isse poori watchlist crash nahi hogi
+          return {
+            _id: item._id,
+            stockSymbol: item.stockSymbol,
+            currentPrice: null,
+            change: null,
+            percentChange: null,
+            dataSource: 'unavailable',
+            error: 'Price data unavailable',
+          };
+        }
       })
     );
 

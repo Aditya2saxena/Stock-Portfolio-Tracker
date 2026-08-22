@@ -1,10 +1,10 @@
 import axios from 'axios';
 
 const API = axios.create({
-  baseURL: 'http://localhost:5000/api',
+  baseURL: process.env.REACT_APP_API_URL || 'http://localhost:5000/api',
 });
 
-// Har request mein token automatically add karo (agar hai)
+// Attach JWT token automatically to every request if available
 API.interceptors.request.use((req) => {
   const token = localStorage.getItem('token');
   if (token) {
