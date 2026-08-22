@@ -1,291 +1,171 @@
-Search results provide quick navigation to the stock details page.
-
-📋 Stock Details
-
-Each stock has a dedicated details page containing:
-
-Current price
-Price change
-Percentage change
-Market high
-Market low
-Open price
-Previous close
-Interactive price chart
-Watchlist action
-BUY button
-SELL button
-User's current position
-💰 BUY / SELL System
-
-Users can execute stock transactions directly from the application.
-
-BUY
-
-When buying additional shares, the application automatically calculates the weighted average purchase price.
-
-New Average Price =
-(Old Investment + New Investment)
-/
-(Old Quantity + New Quantity)
-SELL
-
-The system validates:
-
-Stock ownership
-Available quantity
-Valid transaction quantity
-
-Users cannot sell more shares than they currently own.
-
-🧾 Transaction History
-
-Every BUY and SELL transaction is stored in MongoDB.
-
-Transaction history includes:
-
-Stock symbol
-Transaction type
-Quantity
-Price
-Total amount
-Date and time
-
-Available filters:
-
-ALL
-BUY
-SELL
-⭐ Watchlist
-
-Users can maintain a personal stock watchlist.
-
-Features:
-
-Add stocks
-Remove stocks
-Real-time prices
-Percentage changes
-View stock details
-Buy directly from watchlist
-Sort by symbol
-Sort by price
-Sort by percentage change
-🔔 Price Alerts
-
-Users can create price-based alerts.
-
-Example:
-
-Stock: AAPL
-Current Price: ₹227
-
-
-Alert Type: ABOVE
-Target Price: ₹228
-
-When the target price is reached:
-
-🔔 Price Alert
-
-
-AAPL has reached your target price.
-
-
-Target: ₹228
-Current: ₹228.32
-
-The application provides:
-
-Toast notification
-Notification bell badge
-Notification record
-Alert deactivation after trigger
-
-Supported conditions:
-
-ABOVE
-BELOW
-🔔 Notification System
-
-The application includes an in-app notification system.
-
-Features:
-
-Notification bell
-Unread notification count
-Notification dropdown
-Mark notification as read
-Mark all notifications as read
-Real-time alert notifications
-📊 Portfolio Analytics
-
-Dedicated analytics dashboard providing:
-
-Portfolio performance
-Historical portfolio value
-Asset allocation
-Concentration analysis
-Portfolio diversification insights
-Performance trends
-
-Supported time ranges:
-
-1D
-1W
-1M
-3M
-6M
-1Y
-Portfolio Concentration
-
-The application calculates a normalized Herfindahl-Hirschman Index (HHI) to identify portfolio concentration risk.
-
-🏆 Portfolio Insights
-
-The dashboard automatically identifies:
-
-Best Performer
-
-The stock with the highest return percentage.
-
-Worst Performer
-
-The stock with the lowest return percentage.
-
-Portfolio Health
-
-The application evaluates portfolio characteristics such as:
-
-Diversification
-Concentration
-Risk
-Performance
-🌓 Dark / Light Mode
-
-The application supports both:
-
-Dark Mode
-Light Mode
-
-User preference is persisted using localStorage.
-
-The dark theme follows a modern fintech-style design with:
-
-#0b1120
-#111827
-#1f2937
-📱 Responsive Design
-
-The application is designed to work across:
-
-Desktop
-Laptop
-Tablet
-Mobile
-
-Responsive features include:
-
-Mobile sidebar drawer
-Responsive tables
-Responsive charts
-Stacked forms
-Mobile-friendly navigation
-⚡ Real-Time Architecture
-
-Stock price updates are delivered using Socket.io.
-
-Stock Market API
-       ↓
-Node.js / Express
-       ↓
-Socket.io
-       ↓
-React Client
-       ↓
-Portfolio UI
-
-This allows portfolio values and stock prices to update without manually refreshing the page.
-
-🏗️ Architecture
-                    ┌──────────────────┐
-                    │   React Client   │
-                    │                  │
-                    │ Dashboard        │
-                    │ Watchlist        │
-                    │ Stock Details    │
-                    │ Transactions     │
-                    │ Analytics        │
-                    │ Alerts           │
-                    └────────┬─────────┘
-                             │
-                       REST API
-                             │
-                    ┌────────▼─────────┐
-                    │ Node.js /        │
-                    │ Express Server   │
-                    └────────┬─────────┘
-                             │
-             ┌───────────────┼────────────────┐
-             │               │                │
-             ▼               ▼                ▼
-        MongoDB         Stock Price API   Socket.io
-             │                                │
-             └───────────────┬────────────────┘
-                             │
-                             ▼
-                    Real-Time Portfolio
-                         Updates
-🛠️ Tech Stack
-Frontend
-React.js
-React Router
-Axios
-Recharts
-Socket.io Client
-Lucide React
-CSS3
-Responsive Design
-Backend
-Node.js
-Express.js
-MongoDB
-Mongoose
-JWT
-Socket.io
-Development Tools
-Git
-GitHub
-VS Code
-npm
-Postman / API testing tools
-📂 Project Structure
-Stock-Portfolio-Tracker/
+# 📈 Stock Portfolio Tracker
+
+A real-time stock portfolio management application built with the MERN stack (MongoDB, Express, React, Node.js). Track holdings, execute buy/sell orders, monitor live prices, set price alerts, and analyze portfolio diversification — all in one dashboard.
+
+**Live Demo:** [Add your deployed link here]
+**Repository:** https://github.com/Aditya2saxena/Stock-Portfolio-Tracker
+
+---
+
+## ✨ Features
+
+- 🔐 **Authentication** — JWT-based login/register with bcrypt password hashing
+- 💼 **Portfolio Management** — Add/remove holdings with automatic weighted-average cost basis calculation
+- 📊 **Live Stock Prices** — Real-time market data via Alpha Vantage API
+- ⚡ **Real-Time Updates** — Socket.io streams price updates to the dashboard without page refresh
+- 🛡️ **3-Level API Fallback** — Live data → cached data → demo data, so the app never breaks even if the external API rate-limits
+- 💹 **Buy/Sell Engine** — Full transaction system with oversell protection and weighted-average price recalculation
+- 📜 **Transaction History** — Filterable ledger (All/Buy/Sell) with volume summaries
+- ⭐ **Watchlist** — Track stocks without owning them, sortable by price/symbol/change
+- 🔔 **Price Alerts** — Set target price triggers (above/below); get notified automatically when hit
+- 📈 **Portfolio Analytics** — Herfindahl-Hirschman Index (HHI) diversification score, allocation breakdown, historical performance chart
+- 🌗 **Dark/Light Mode** — Theme toggle with persistence
+- 📱 **Responsive UI** — Works across desktop, tablet, and mobile
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React, React Router, Recharts, Socket.io-client, Axios, lucide-react |
+| Backend | Node.js, Express.js |
+| Database | MongoDB with Mongoose |
+| Auth | JWT + bcrypt |
+| Real-time | Socket.io |
+| Market Data | Alpha Vantage API |
+
+---
+
+## 🏗️ Architecture
+
+```
+React Dashboard
+      ↓
+Express REST API  ←────────────→  Socket.io (real-time price stream)
+      ↓
+MongoDB (Users, Portfolio, Transactions, Watchlist, Alerts, Snapshots)
+      ↓
+Alpha Vantage API
+      ↓
+  Available?
+   ├── Yes → Live price (cached for 5 min to conserve rate limit)
+   └── No  → Last cached price → Demo data (labeled clearly in UI)
+```
+
+**Why the fallback system matters:** Alpha Vantage's free tier allows only 25 requests/day. Rather than letting the app break when the limit is hit, every price lookup falls back gracefully — live data is preferred, stale cache is used if live fails, and clearly-labeled demo data is the last resort. The UI always shows which source is being used (🟢 Live / 🟡 Cached / 🟠 Demo).
+
+---
+
+## 📂 Project Structure
+
+```
+stock-portfolio-tracker/
+├── client/                  # React frontend
+│   └── src/
+│       ├── api/             # Axios service layer
+│       ├── context/         # Auth & Theme context providers
+│       ├── pages/           # Route-level pages
+│       └── components/      # Reusable UI components
 │
-├── client/
-│   ├── public/
-│   ├── src/
-│   │   ├── components/
-│   │   ├── contexts/
-│   │   ├── pages/
-│   │   ├── services/
-│   │   ├── App.js
-│   │   └── index.js
-│   │
-│   ├── package.json
-│   └── README.md
-│
-├── server/
-│   ├── src/
-│   │   ├── controllers/
-│   │   ├── middleware/
-│   │   ├── models/
-│   │   ├── routes/
-│   │   ├── services/
-│   │   └── utils/
-│   │
-│   ├── server.js
-│   └── package.json
-│
-├── .gitignore
-└── README.md
+└── server/                  # Node/Express backend
+    └── src/
+        ├── config/          # DB connection
+        ├── controllers/     # Route handlers / business logic
+        ├── middleware/      # JWT auth middleware
+        ├── models/          # Mongoose schemas
+        ├── routes/          # API route definitions
+        └── services/        # Stock price fetching + fallback logic
+```
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js (v18+)
+- MongoDB Atlas account (free tier)
+- Alpha Vantage API key (free at [alphavantage.co](https://www.alphavantage.co/support/#api-key))
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/Aditya2saxena/Stock-Portfolio-Tracker.git
+cd Stock-Portfolio-Tracker
+```
+
+### 2. Backend Setup
+```bash
+cd server
+npm install
+```
+
+Create a `.env` file in `server/`:
+```
+PORT=5000
+MONGO_URI=your_mongodb_connection_string
+JWT_SECRET=your_jwt_secret
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key
+```
+
+```bash
+npm run dev
+```
+
+### 3. Frontend Setup
+```bash
+cd ../client
+npm install
+npm start
+```
+
+App runs at `http://localhost:3000`, API at `http://localhost:5000`.
+
+---
+
+## 🔑 API Overview
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/api/auth/register` | Create a new user |
+| POST | `/api/auth/login` | Login, returns JWT |
+| GET | `/api/portfolio` | Get holdings with live P/L |
+| POST | `/api/transactions` | Execute a BUY/SELL order |
+| GET | `/api/transactions` | Get transaction history |
+| GET | `/api/watchlist` | Get watchlist with live prices |
+| GET | `/api/stocks/search?query=` | Search stocks by symbol/name |
+| POST | `/api/alerts` | Create a price alert |
+| GET | `/api/analytics` | Portfolio diversification & performance data |
+
+All routes except register/login require a `Authorization: Bearer <token>` header.
+
+---
+
+## 🧠 Key Design Decisions
+
+- **Weighted average cost basis** — Buying the same stock multiple times merges into one holding using `(oldInvestment + newInvestment) / totalQuantity`, matching how real brokerages track average cost.
+- **Rate-limit-aware caching** — Prices are cached for 5 minutes before a fresh API call is made, cutting external API calls by roughly 10x compared to naive polling.
+- **Crash-proof controllers** — If price data is unavailable for one stock, only that item is marked "unavailable" — the rest of the portfolio still loads.
+- **User data isolation** — Every database query is scoped to `req.user.id`, so users can never access another user's portfolio, transactions, or alerts.
+
+---
+
+## 🔮 Future Scope
+
+- Stock news feed integration
+- Multi-currency support
+- CSV export of transaction history
+- Automated tests (Jest/Supertest)
+- CI/CD pipeline
+
+---
+
+## 📄 License
+
+This project is open source and available under the [MIT License](LICENSE).
+
+---
+
+## 🙋 Author
+
+**Aditya Saxena**
+GitHub: [@Aditya2saxena](https://github.com/Aditya2saxena)
