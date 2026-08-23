@@ -69,11 +69,21 @@ const fetchLiveData = async (symbol) => {
     },
   });
 
-  const quote = response.data['Global Quote'];
+  console.log(
+  `🔎 Alpha Vantage response for ${symbol}:`,
+  JSON.stringify(response.data)
+);
 
-  if (!quote || !quote['05. price']) {
-    throw new Error('No live data available (rate limit or invalid symbol)');
-  }
+const quote = response.data['Global Quote'];
+
+if (!quote || !quote['05. price']) {
+  throw new Error(
+    response.data.Note ||
+    response.data.Information ||
+    response.data['Error Message'] ||
+    'No live data available'
+  );
+}
 
   // Retrieve matching metadata name if known
   const foundStock = POPULAR_STOCKS.find((s) => s.symbol === symbol || `${s.symbol}.NS` === symbol);
