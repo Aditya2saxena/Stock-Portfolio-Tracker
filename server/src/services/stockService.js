@@ -1,212 +1,178 @@
-const axios = require('axios');
-const ALPHA_VANTAGE_URL = 'https://www.alphavantage.co/query';
+const { normalizeSymbol, KNOWN_INDIAN_STOCKS } = require('../utils/symbolNormalizer');
+const cacheService = require('./cacheService');
+const marketDataProvider = require('./marketDataProvider');
 
-// Cache: 5 minutes TTL
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const priceCache = {};
-
-// Popular stock master directory for search matching & fallback
-const POPULAR_STOCKS = [
-  { symbol: 'AAPL', name: 'Apple Inc.', region: 'United States', currency: 'USD' },
-  { symbol: 'MSFT', name: 'Microsoft Corporation', region: 'United States', currency: 'USD' },
-  { symbol: 'GOOGL', name: 'Alphabet Inc. (Google)', region: 'United States', currency: 'USD' },
-  { symbol: 'AMZN', name: 'Amazon.com Inc.', region: 'United States', currency: 'USD' },
-  { symbol: 'TSLA', name: 'Tesla Inc.', region: 'United States', currency: 'USD' },
-  { symbol: 'NVDA', name: 'NVIDIA Corporation', region: 'United States', currency: 'USD' },
-  { symbol: 'META', name: 'Meta Platforms Inc.', region: 'United States', currency: 'USD' },
-  { symbol: 'NFLX', name: 'Netflix Inc.', region: 'United States', currency: 'USD' },
-  { symbol: 'AMD', name: 'Advanced Micro Devices Inc.', region: 'United States', currency: 'USD' },
-  { symbol: 'DIS', name: 'The Walt Disney Company', region: 'United States', currency: 'USD' },
-  { symbol: 'RELIANCE', name: 'Reliance Industries Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'INFY', name: 'Infosys Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'TCS', name: 'Tata Consultancy Services Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'HDFCBANK', name: 'HDFC Bank Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'ICICIBANK', name: 'ICICI Bank Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'TATAMOTORS', name: 'Tata Motors Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'WIPRO', name: 'Wipro Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'SBIN', name: 'State Bank of India', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'BHARTIARTL', name: 'Bharti Airtel Ltd.', region: 'India (NSE)', currency: 'INR' },
-  { symbol: 'LT', name: 'Larsen & Toubro Ltd.', region: 'India (NSE)', currency: 'INR' },
-];
-
-const demoPrices = {
-  'AAPL': { currentPrice: 227.50, change: 1.20, percentChange: 0.53, high: 228.10, low: 225.30, open: 226.00, previousClose: 226.30, name: 'Apple Inc.' },
-  'MSFT': { currentPrice: 420.50, change: 2.30, percentChange: 0.55, high: 422.00, low: 418.00, open: 419.00, previousClose: 418.20, name: 'Microsoft Corporation' },
-  'GOOGL': { currentPrice: 175.40, change: -1.10, percentChange: -0.62, high: 177.20, low: 174.50, open: 176.50, previousClose: 176.50, name: 'Alphabet Inc.' },
-  'AMZN': { currentPrice: 186.20, change: 3.40, percentChange: 1.86, high: 187.50, low: 183.10, open: 184.00, previousClose: 182.80, name: 'Amazon.com Inc.' },
-  'TSLA': { currentPrice: 245.80, change: -3.40, percentChange: -1.36, high: 250.20, low: 244.10, open: 249.00, previousClose: 249.20, name: 'Tesla Inc.' },
-  'RELIANCE': { currentPrice: 1315.55, change: 12.30, percentChange: 0.94, high: 1320.00, low: 1305.00, open: 1310.00, previousClose: 1303.25, name: 'Reliance Industries Ltd.' },
-  'RELIANCE.NS': { currentPrice: 1315.55, change: 12.30, percentChange: 0.94, high: 1320.00, low: 1305.00, open: 1310.00, previousClose: 1303.25, name: 'Reliance Industries Ltd.' },
-  'TCS': { currentPrice: 3200.40, change: -8.20, percentChange: -0.26, high: 3215.00, low: 3190.00, open: 3210.00, previousClose: 3208.60, name: 'Tata Consultancy Services Ltd.' },
-  'TCS.NS': { currentPrice: 3200.40, change: -8.20, percentChange: -0.26, high: 3215.00, low: 3190.00, open: 3210.00, previousClose: 3208.60, name: 'Tata Consultancy Services Ltd.' },
-  'INFY': { currentPrice: 1520.25, change: 5.10, percentChange: 0.34, high: 1525.00, low: 1512.00, open: 1515.00, previousClose: 1515.15, name: 'Infosys Ltd.' },
-  'INFY.NS': { currentPrice: 1520.25, change: 5.10, percentChange: 0.34, high: 1525.00, low: 1512.00, open: 1515.00, previousClose: 1515.15, name: 'Infosys Ltd.' },
-  'NVDA': { currentPrice: 128.50, change: 4.20, percentChange: 3.38, high: 129.80, low: 125.10, open: 126.00, previousClose: 124.30, name: 'NVIDIA Corporation' },
-  'META': { currentPrice: 485.10, change: -2.30, percentChange: -0.47, high: 490.00, low: 482.00, open: 488.00, previousClose: 487.40, name: 'Meta Platforms Inc.' },
+// Demo prices array ONLY for offline fallback when provider is unreachable
+const DEMO_PRICES = {
+  'AAPL': { currentPrice: 227.50, change: 1.20, percentChange: 0.53, high: 228.10, low: 225.30, open: 226.00, previousClose: 226.30, name: 'Apple Inc.', currency: 'USD', exchange: 'NASDAQ' },
+  'MSFT': { currentPrice: 420.50, change: 2.30, percentChange: 0.55, high: 422.00, low: 418.00, open: 419.00, previousClose: 418.20, name: 'Microsoft Corporation', currency: 'USD', exchange: 'NASDAQ' },
+  'GOOGL': { currentPrice: 175.40, change: -1.10, percentChange: -0.62, high: 177.20, low: 174.50, open: 176.50, previousClose: 176.50, name: 'Alphabet Inc.', currency: 'USD', exchange: 'NASDAQ' },
+  'AMZN': { currentPrice: 186.20, change: 3.40, percentChange: 1.86, high: 187.50, low: 183.10, open: 184.00, previousClose: 182.80, name: 'Amazon.com Inc.', currency: 'USD', exchange: 'NASDAQ' },
+  'TSLA': { currentPrice: 245.80, change: -3.40, percentChange: -1.36, high: 250.20, low: 244.10, open: 249.00, previousClose: 249.20, name: 'Tesla Inc.', currency: 'USD', exchange: 'NASDAQ' },
+  'NVDA': { currentPrice: 128.50, change: 4.20, percentChange: 3.38, high: 129.80, low: 125.10, open: 126.00, previousClose: 124.30, name: 'NVIDIA Corporation', currency: 'USD', exchange: 'NASDAQ' },
+  'META': { currentPrice: 485.10, change: -2.30, percentChange: -0.47, high: 490.00, low: 482.00, open: 488.00, previousClose: 487.40, name: 'Meta Platforms Inc.', currency: 'USD', exchange: 'NASDAQ' },
+  'RELIANCE': { currentPrice: 1315.55, change: 12.30, percentChange: 0.94, high: 1320.00, low: 1305.00, open: 1310.00, previousClose: 1303.25, name: 'Reliance Industries Ltd.', currency: 'INR', exchange: 'NSE' },
+  'TCS': { currentPrice: 3200.40, change: -8.20, percentChange: -0.26, high: 3215.00, low: 3190.00, open: 3210.00, previousClose: 3208.60, name: 'Tata Consultancy Services Ltd.', currency: 'INR', exchange: 'NSE' },
+  'INFY': { currentPrice: 1520.25, change: 5.10, percentChange: 0.34, high: 1525.00, low: 1512.00, open: 1515.00, previousClose: 1515.15, name: 'Infosys Ltd.', currency: 'INR', exchange: 'NSE' },
+  'HDFCBANK': { currentPrice: 1650.00, change: 8.50, percentChange: 0.52, high: 1660.00, low: 1642.00, open: 1645.00, previousClose: 1641.50, name: 'HDFC Bank Ltd.', currency: 'INR', exchange: 'NSE' },
+  'ICICIBANK': { currentPrice: 1210.30, change: -4.10, percentChange: -0.34, high: 1222.00, low: 1205.00, open: 1218.00, previousClose: 1214.40, name: 'ICICI Bank Ltd.', currency: 'INR', exchange: 'NSE' },
+  'TATAMOTORS': { currentPrice: 980.50, change: 14.20, percentChange: 1.47, high: 988.00, low: 968.00, open: 970.00, previousClose: 966.30, name: 'Tata Motors Ltd.', currency: 'INR', exchange: 'NSE' },
+  'SBIN': { currentPrice: 835.40, change: 2.10, percentChange: 0.25, high: 841.00, low: 830.00, open: 832.00, previousClose: 833.30, name: 'State Bank of India', currency: 'INR', exchange: 'NSE' },
+  'WIPRO': { currentPrice: 525.60, change: -1.40, percentChange: -0.27, high: 530.00, low: 522.00, open: 528.00, previousClose: 527.00, name: 'Wipro Ltd.', currency: 'INR', exchange: 'NSE' },
 };
 
-const normalizeSymbol = (symbol) => {
-  let cleanSymbol = symbol.toUpperCase().trim();
-  cleanSymbol = cleanSymbol.replace(':NSE', '.NS').replace(':BSE', '.BSE');
-  return cleanSymbol;
-};
-
-const findMatchingKey = (store, symbol) => {
-  if (store[symbol]) return symbol;
-  if (store[`${symbol}.NS`]) return `${symbol}.NS`;
-  if (store[`${symbol}.BSE`]) return `${symbol}.BSE`;
-  const clean = symbol.replace('.NS', '').replace('.BSE', '');
-  if (store[clean]) return clean;
-  return null;
-};
-
-const fetchLiveData = async (symbol) => {
-  const response = await axios.get(ALPHA_VANTAGE_URL, {
-    params: {
-      function: 'GLOBAL_QUOTE',
-      symbol,
-      apikey: process.env.ALPHA_VANTAGE_API_KEY,
-    },
-  });
-
-  console.log(
-  `🔎 Alpha Vantage response for ${symbol}:`,
-  JSON.stringify(response.data)
-);
-
-const quote = response.data['Global Quote'];
-
-if (!quote || !quote['05. price']) {
-  throw new Error(
-    response.data.Note ||
-    response.data.Information ||
-    response.data['Error Message'] ||
-    'No live data available'
-  );
-}
-
-  // Retrieve matching metadata name if known
-  const foundStock = POPULAR_STOCKS.find((s) => s.symbol === symbol || `${s.symbol}.NS` === symbol);
-
-  return {
-    symbol: quote['01. symbol'],
-    name: foundStock ? foundStock.name : quote['01. symbol'],
-    currentPrice: parseFloat(quote['05. price']),
-    change: parseFloat(quote['09. change']),
-    percentChange: parseFloat(quote['10. change percent'].replace('%', '')),
-    high: parseFloat(quote['03. high']),
-    low: parseFloat(quote['04. low']),
-    open: parseFloat(quote['02. open']),
-    previousClose: parseFloat(quote['08. previous close']),
-    volume: parseInt(quote['06. volume'], 10),
-    latestTradingDay: quote['07. latest trading day'],
-  };
-};
-
+/**
+ * Main Stock Quote retrieval adhering to Fallback Hierarchy:
+ * 1. LIVE API
+ * 2. FRESH CACHE
+ * 3. STALE CACHE
+ * 4. DEMO DATA (explicitly labelled)
+ * 5. ERROR
+ */
 exports.getStockPrice = async (symbol) => {
-  const alphaVantageSymbol = normalizeSymbol(symbol);
+  const normInfo = normalizeSymbol(symbol);
+  const cacheKey = normInfo.normalizedSymbol;
 
-  // STEP 1: Check fresh cache
-  const cached = priceCache[alphaVantageSymbol];
-  if (cached) {
-    const age = Date.now() - cached.timestamp.getTime();
-    if (age < CACHE_TTL_MS) {
-      return { ...cached.data, dataSource: 'live' };
-    }
+  // STEP 1 & 2: Check Fresh Cache
+  const cached = cacheService.getQuote(cacheKey);
+  if (cached && cached.isFresh) {
+    return { ...cached.data, dataSource: 'live' };
   }
 
-  // STEP 2: Try live API
+  // STEP 3: Try Live External API
   try {
-    const liveData = await fetchLiveData(alphaVantageSymbol);
-    priceCache[alphaVantageSymbol] = { data: liveData, timestamp: new Date() };
-    return { ...liveData, dataSource: 'live' };
+    const liveQuote = await marketDataProvider.fetchQuote(normInfo);
+    cacheService.setQuote(cacheKey, liveQuote);
+    return { ...liveQuote, dataSource: 'live' };
   } catch (liveError) {
-    console.warn(`⚠️ Live API failed for ${alphaVantageSymbol}: ${liveError.message}`);
+    console.warn(`⚠️ Provider quote fetch failed for ${cacheKey}: ${liveError.message}`);
 
-    // STEP 3: Check stale cache
-    const cacheKey = findMatchingKey(priceCache, alphaVantageSymbol);
-    if (cacheKey) {
-      const staleCache = priceCache[cacheKey];
-      return { ...staleCache.data, dataSource: 'cached', lastUpdated: staleCache.timestamp };
-    }
-
-    // STEP 4: Demo fallback
-    const demoKey = findMatchingKey(demoPrices, alphaVantageSymbol);
-    if (demoKey) {
-      const foundStock = POPULAR_STOCKS.find((s) => s.symbol === alphaVantageSymbol || `${s.symbol}.NS` === alphaVantageSymbol);
+    // Check Stale Cache
+    if (cached && cached.data) {
+      const minutesAgo = Math.round((Date.now() - cached.timestamp) / 60000);
       return {
-        symbol: alphaVantageSymbol,
-        name: foundStock ? foundStock.name : demoPrices[demoKey].name || alphaVantageSymbol,
-        ...demoPrices[demoKey],
-        dataSource: 'demo',
+        ...cached.data,
+        dataSource: 'cached',
+        lastUpdated: cached.timestamp,
+        cacheInfo: `Last updated ${minutesAgo} minute${minutesAgo === 1 ? '' : 's'} ago`,
       };
     }
 
-    // Generate fallback for dynamic symbols to prevent breaking UI
-    const foundPopular = POPULAR_STOCKS.find((s) => s.symbol === alphaVantageSymbol || s.symbol.startsWith(alphaVantageSymbol));
-    if (foundPopular) {
+    // STEP 4: Demo Fallback
+    const demoKey = normInfo.displaySymbol;
+    if (DEMO_PRICES[demoKey]) {
+      const demoData = DEMO_PRICES[demoKey];
       return {
-        symbol: alphaVantageSymbol,
-        name: foundPopular.name,
-        currentPrice: 150.00,
-        change: 1.50,
-        percentChange: 1.00,
-        high: 152.00,
-        low: 148.50,
-        open: 149.00,
-        previousClose: 148.50,
+        symbol: normInfo.displaySymbol,
+        fullSymbol: normInfo.normalizedSymbol,
+        name: demoData.name,
+        currentPrice: demoData.currentPrice,
+        change: demoData.change,
+        percentChange: demoData.percentChange,
+        high: demoData.high,
+        low: demoData.low,
+        open: demoData.open,
+        previousClose: demoData.previousClose,
+        volume: 100000,
+        currency: demoData.currency,
+        exchange: demoData.exchange,
         dataSource: 'demo',
+        timestamp: new Date().toISOString(),
+        marketStatus: 'CLOSED',
+        notice: 'Demo data — live market data unavailable',
       };
     }
 
-    throw new Error(`No data available for ${symbol} (live, cache, and demo all unavailable)`);
+    // STEP 5: Controlled Error Response
+    return {
+      symbol: normInfo.displaySymbol,
+      fullSymbol: normInfo.normalizedSymbol,
+      name: normInfo.displaySymbol,
+      currentPrice: 0,
+      change: 0,
+      percentChange: 0,
+      high: 0,
+      low: 0,
+      open: 0,
+      previousClose: 0,
+      volume: 0,
+      currency: normInfo.currency,
+      exchange: normInfo.exchange,
+      dataSource: 'error',
+      timestamp: new Date().toISOString(),
+      error: `Unable to fetch stock data for ${symbol}: ${liveError.message}`,
+    };
   }
 };
 
-// Search stock service implementation
+/**
+ * Fetch Historical Time Series Chart Data
+ */
+exports.getHistoricalData = async (symbol, range = '1M') => {
+  const normInfo = normalizeSymbol(symbol);
+  const cacheKey = normInfo.normalizedSymbol;
+
+  // Check cache
+  const cached = cacheService.getHistory(cacheKey, range);
+  if (cached && cached.isFresh) {
+    return cached.data;
+  }
+
+  // Fetch from provider
+  const history = await marketDataProvider.fetchHistoricalData(normInfo, range);
+  if (history && history.length > 0) {
+    cacheService.setHistory(cacheKey, range, history);
+    return history;
+  }
+
+  // If cached data exists (even stale)
+  if (cached && cached.data) {
+    return cached.data;
+  }
+
+  return [];
+};
+
+/**
+ * Search Stocks with caching and fallback
+ */
 exports.searchStocksService = async (query) => {
   if (!query || query.trim() === '') return [];
 
-  const q = query.trim().toUpperCase();
+  const cleanQuery = query.trim();
 
-  // Filter master popular stocks directory first
-  const localMatches = POPULAR_STOCKS.filter(
-    (stock) => stock.symbol.toUpperCase().includes(q) || stock.name.toUpperCase().includes(q)
-  );
+  // Check cache
+  const cachedResults = cacheService.getSearch(cleanQuery);
+  if (cachedResults) return cachedResults;
 
-  // Attempt Alpha Vantage symbol search if configured
-  try {
-    if (process.env.ALPHA_VANTAGE_API_KEY && process.env.ALPHA_VANTAGE_API_KEY !== 'demo') {
-      const response = await axios.get(ALPHA_VANTAGE_URL, {
-        params: {
-          function: 'SYMBOL_SEARCH',
-          keywords: q,
-          apikey: process.env.ALPHA_VANTAGE_API_KEY,
-        },
-      });
+  let results = await marketDataProvider.searchSymbols(cleanQuery);
 
-      const bestMatches = response.data.bestMatches;
-      if (bestMatches && Array.isArray(bestMatches)) {
-        const apiMatches = bestMatches.map((item) => ({
-          symbol: item['1. symbol'],
-          name: item['2. name'],
-          region: item['4. region'],
-          currency: item['8. currency'],
-        }));
+  // Fallback / merge with local popular stock directory
+  if (!results || results.length === 0) {
+    const q = cleanQuery.toUpperCase();
+    const localPopular = [
+      { symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', region: 'United States', currency: 'USD' },
+      { symbol: 'MSFT', name: 'Microsoft Corporation', exchange: 'NASDAQ', region: 'United States', currency: 'USD' },
+      { symbol: 'GOOGL', name: 'Alphabet Inc. (Google)', exchange: 'NASDAQ', region: 'United States', currency: 'USD' },
+      { symbol: 'AMZN', name: 'Amazon.com Inc.', exchange: 'NASDAQ', region: 'United States', currency: 'USD' },
+      { symbol: 'TSLA', name: 'Tesla Inc.', exchange: 'NASDAQ', region: 'United States', currency: 'USD' },
+      { symbol: 'NVDA', name: 'NVIDIA Corporation', exchange: 'NASDAQ', region: 'United States', currency: 'USD' },
+      { symbol: 'META', name: 'Meta Platforms Inc.', exchange: 'NASDAQ', region: 'United States', currency: 'USD' },
+      { symbol: 'RELIANCE', name: 'Reliance Industries Ltd.', exchange: 'NSE', region: 'India', currency: 'INR' },
+      { symbol: 'TCS', name: 'Tata Consultancy Services Ltd.', exchange: 'NSE', region: 'India', currency: 'INR' },
+      { symbol: 'INFY', name: 'Infosys Ltd.', exchange: 'NSE', region: 'India', currency: 'INR' },
+      { symbol: 'HDFCBANK', name: 'HDFC Bank Ltd.', exchange: 'NSE', region: 'India', currency: 'INR' },
+      { symbol: 'ICICIBANK', name: 'ICICI Bank Ltd.', exchange: 'NSE', region: 'India', currency: 'INR' },
+      { symbol: 'TATAMOTORS', name: 'Tata Motors Ltd.', exchange: 'NSE', region: 'India', currency: 'INR' },
+      { symbol: 'SBIN', name: 'State Bank of India', exchange: 'NSE', region: 'India', currency: 'INR' },
+      { symbol: 'WIPRO', name: 'Wipro Ltd.', exchange: 'NSE', region: 'India', currency: 'INR' },
+    ];
 
-        // Merge results avoiding duplicate symbols
-        const merged = [...localMatches];
-        apiMatches.forEach((apiItem) => {
-          if (!merged.some((m) => m.symbol === apiItem.symbol)) {
-            merged.push(apiItem);
-          }
-        });
-        return merged.slice(0, 10);
-      }
-    }
-  } catch (err) {
-    console.warn(`Search API error: ${err.message}`);
+    results = localPopular.filter(
+      (s) => s.symbol.toUpperCase().includes(q) || s.name.toUpperCase().includes(q)
+    );
   }
 
-  return localMatches.slice(0, 10);
+  cacheService.setSearch(cleanQuery, results);
+  return results;
 };

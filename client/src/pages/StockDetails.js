@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getStockDetails } from '../api/stockService';
+import { getStockDetails, getStockHistory } from '../api/stockService';
 import { getPortfolio } from '../api/portfolioService';
 import { getWatchlist, addToWatchlist, removeFromWatchlist } from '../api/watchlistService';
 import Layout from '../components/layout/Layout';
 import TransactionModal from '../components/modals/TransactionModal';
 import { useToast } from '../context/ToastContext';
+import socket from '../socket';
 import {
   TrendingUp,
   TrendingDown,
@@ -15,6 +16,8 @@ import {
   Briefcase,
   Layers,
   Activity,
+  Clock,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -34,8 +37,10 @@ function StockDetails() {
   const [holding, setHolding] = useState(null);
   const [inWatchlist, setInWatchlist] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [chartData, setChartData] = useState([]);
   const [error, setError] = useState('');
-  const [activeRange, setActiveRange] = useState('1D');
+  const [activeRange, setActiveRange] = useState('1M');
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -56,13 +61,15 @@ function StockDetails() {
       // 2. Fetch User Portfolio Position
       const portfolioRes = await getPortfolio();
       const userHoldings = portfolioRes.data || [];
-      const matchHolding = userHoldings.find((item) => item.stockSymbol === symbol.toUpperCase());
+      const matchHolding = userHoldings.find(
+        (item) => item.stockSymbol.toUpperCase() === symbol.toUpperCase()
+      );
       setHolding(matchHolding || null);
 
       // 3. Fetch Watchlist Status
       const watchlistRes = await getWatchlist();
       const isStarred = (watchlistRes.data || []).some(
-        (item) => item.stockSymbol === symbol.toUpperCase()
+        (item) => item.stockSymbol.toUpperCase() === symbol.toUpperCase()
       );
       setInWatchlist(isStarred);
     } catch (err) {
@@ -73,9 +80,53 @@ function StockDetails() {
     }
   }, [symbol]);
 
+  // Fetch real historical data based on active range (1D, 1W, 1M, 3M, 6M, 1Y)
+  const fetchHistoricalData = useCallback(async () => {
+    if (!symbol) return;
+    try {
+      setHistoryLoading(true);
+      const res = await getStockHistory(symbol, activeRange);
+      setChartData(res.data || []);
+    } catch (err) {
+      console.error('Failed to fetch historical chart data:', err);
+      setChartData([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [symbol, activeRange]);
+
   useEffect(() => {
     fetchStockAndPosition();
   }, [fetchStockAndPosition]);
+
+  useEffect(() => {
+    fetchHistoricalData();
+  }, [fetchHistoricalData]);
+
+  // Real-time socket subscription for this symbol
+  useEffect(() => {
+    if (!symbol) return;
+    const cleanSym = symbol.toUpperCase();
+
+    // Subscribe to symbol update
+    socket.emit('subscribe:symbols', [cleanSym]);
+
+    const handlePriceUpdate = (updatedStock) => {
+      if (updatedStock.symbol.toUpperCase() === cleanSym || updatedStock.fullSymbol?.toUpperCase() === cleanSym) {
+        setStock((prev) => ({
+          ...prev,
+          ...updatedStock,
+        }));
+      }
+    };
+
+    socket.on('priceUpdate', handlePriceUpdate);
+
+    return () => {
+      socket.emit('unsubscribe:symbols', [cleanSym]);
+      socket.off('priceUpdate', handlePriceUpdate);
+    };
+  }, [symbol]);
 
   // Handle Watchlist Toggle
   const handleWatchlistToggle = async () => {
@@ -100,30 +151,45 @@ function StockDetails() {
     setIsModalOpen(true);
   };
 
-  // Generate simulated chart history around current price for visual chart
-  const generateMockChartData = (currentPrice) => {
-    const base = Number(currentPrice || 100);
-    const points = [];
-    const times = ['09:30', '10:30', '11:30', '12:30', '13:30', '14:30', '15:30'];
-    let val = base * 0.985;
-    times.forEach((t, i) => {
-      val = val + (Math.random() - 0.45) * (base * 0.015);
-      points.push({
-        time: t,
-        price: Number(val.toFixed(2)),
-      });
-    });
-    // ensure last point equals current price
-    points[points.length - 1].price = base;
-    return points;
-  };
-
   const currentPrice = stock?.currentPrice ? Number(stock.currentPrice) : 0;
   const change = stock?.change !== undefined ? Number(stock.change) : 0;
   const percentChange = stock?.percentChange !== undefined ? Number(stock.percentChange) : 0;
   const isPositive = change >= 0;
+  const currSymbol = stock?.currency === 'INR' ? '₹' : '$';
 
-  const chartData = stock ? generateMockChartData(currentPrice) : [];
+  const getSourceBadgeColor = (source) => {
+    switch (source) {
+      case 'live':
+        return '#10b981'; // Green
+      case 'cached':
+        return '#f59e0b'; // Amber
+      case 'demo':
+        return '#ef4444'; // Red
+      default:
+        return '#6b7280';
+    }
+  };
+
+  const renderDataSourceNotice = () => {
+    if (!stock) return null;
+    if (stock.dataSource === 'cached') {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: '#f59e0b', marginTop: '0.4rem' }}>
+          <Clock size={14} />
+          <span>{stock.cacheInfo || 'Cached market data (API limitation)'}</span>
+        </div>
+      );
+    }
+    if (stock.dataSource === 'demo') {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: '#ef4444', marginTop: '0.4rem' }}>
+          <AlertTriangle size={14} />
+          <span>{stock.notice || 'Demo data — live market data unavailable'}</span>
+        </div>
+      );
+    }
+    return null;
+  };
 
   return (
     <Layout title={`Stock / ${symbol ? symbol.toUpperCase() : ''}`}>
@@ -156,27 +222,54 @@ function StockDetails() {
             }}
           >
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                 <h2 style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--text-main)', letterSpacing: '-0.02em', margin: 0 }}>
                   {stock.symbol}
                 </h2>
+
                 <span
-                  className={`badge badge-${stock.dataSource || 'live'}`}
-                  style={{ fontSize: '0.75rem' }}
+                  style={{
+                    fontSize: '0.75rem',
+                    fontWeight: '700',
+                    textTransform: 'uppercase',
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '4px',
+                    backgroundColor: getSourceBadgeColor(stock.dataSource) + '20',
+                    color: getSourceBadgeColor(stock.dataSource),
+                    border: `1px solid ${getSourceBadgeColor(stock.dataSource)}40`,
+                  }}
                 >
                   {stock.dataSource || 'live'}
                 </span>
+
+                {stock.marketStatus && (
+                  <span
+                    style={{
+                      fontSize: '0.75rem',
+                      fontWeight: '600',
+                      padding: '0.2rem 0.5rem',
+                      borderRadius: '4px',
+                      backgroundColor: stock.marketStatus === 'OPEN' ? '#10b98115' : '#6b728015',
+                      color: stock.marketStatus === 'OPEN' ? '#10b981' : '#6b7280',
+                    }}
+                  >
+                    Market: {stock.marketStatus}
+                  </span>
+                )}
               </div>
+
               <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                {stock.name || stock.symbol}
+                {stock.name || stock.symbol} • {stock.exchange || 'Stock Exchange'} ({stock.currency || 'USD'})
               </p>
+
+              {renderDataSourceNotice()}
             </div>
 
             {/* Price Info & Action Buttons */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: '2rem', fontWeight: '800', color: 'var(--text-main)', lineHeight: 1.1 }}>
-                  ₹{currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  {currSymbol}{currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginTop: '0.35rem' }}>
                   <span
@@ -188,7 +281,7 @@ function StockDetails() {
                     }}
                   >
                     {isPositive ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                    {isPositive ? '+₹' : '-₹'}
+                    {isPositive ? `+${currSymbol}` : `-${currSymbol}`}
                     {Math.abs(change).toFixed(2)} ({isPositive ? '+' : ''}
                     {percentChange.toFixed(2)}%)
                   </span>
@@ -210,6 +303,7 @@ function StockDetails() {
                     alignItems: 'center',
                     gap: '0.5rem',
                     fontSize: '0.875rem',
+                    cursor: 'pointer',
                   }}
                 >
                   <Star size={18} fill={inWatchlist ? '#f59e0b' : 'none'} />
@@ -228,6 +322,7 @@ function StockDetails() {
                     alignItems: 'center',
                     gap: '0.4rem',
                     fontSize: '0.9rem',
+                    cursor: 'pointer',
                   }}
                 >
                   <ArrowUpRight size={18} />
@@ -247,6 +342,7 @@ function StockDetails() {
                       alignItems: 'center',
                       gap: '0.4rem',
                       fontSize: '0.9rem',
+                      cursor: 'pointer',
                     }}
                   >
                     <ArrowDownRight size={18} />
@@ -286,21 +382,21 @@ function StockDetails() {
                 <div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Avg Buy Price</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)', marginTop: '0.25rem' }}>
-                    ₹{Number(holding.buyPrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    {currSymbol}{Number(holding.buyPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
 
                 <div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Invested</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-main)', marginTop: '0.25rem' }}>
-                    ₹{(Number(holding.buyPrice || 0) * holding.quantity).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    {currSymbol}{(Number(holding.buyPrice || 0) * holding.quantity).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
 
                 <div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Current Value</div>
                   <div style={{ fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-main)', marginTop: '0.25rem' }}>
-                    ₹{(currentPrice * holding.quantity).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    {currSymbol}{(currentPrice * holding.quantity).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
 
@@ -316,8 +412,8 @@ function StockDetails() {
                       marginTop: '0.25rem',
                     }}
                   >
-                    {(currentPrice * holding.quantity - Number(holding.buyPrice || 0) * holding.quantity) >= 0 ? '+₹' : '-₹'}
-                    {Math.abs(currentPrice * holding.quantity - Number(holding.buyPrice || 0) * holding.quantity).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    {(currentPrice * holding.quantity - Number(holding.buyPrice || 0) * holding.quantity) >= 0 ? `+${currSymbol}` : `-${currSymbol}`}
+                    {Math.abs(currentPrice * holding.quantity - Number(holding.buyPrice || 0) * holding.quantity).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                 </div>
               </div>
@@ -332,7 +428,7 @@ function StockDetails() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <TrendingUp size={18} color="var(--color-accent)" />
                   <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', margin: 0 }}>
-                    Price Movement
+                    Real Historical Price Movement
                   </h3>
                 </div>
 
@@ -359,6 +455,7 @@ function StockDetails() {
                         borderRadius: 'var(--radius-sm)',
                         backgroundColor: activeRange === range ? 'var(--color-accent)' : 'transparent',
                         color: activeRange === range ? '#ffffff' : 'var(--text-muted)',
+                        cursor: 'pointer',
                       }}
                     >
                       {range}
@@ -367,22 +464,33 @@ function StockDetails() {
                 </div>
               </div>
 
-              <div style={{ width: '100%', height: 280 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-                    <XAxis dataKey="time" stroke="var(--text-subtle)" fontSize={11} tickLine={false} />
-                    <YAxis stroke="var(--text-subtle)" fontSize={11} tickLine={false} domain={['auto', 'auto']} tickFormatter={(val) => `₹${val}`} />
-                    <Tooltip formatter={(val) => [`₹${Number(val).toFixed(2)}`, 'Price']} />
-                    <Line
-                      type="monotone"
-                      dataKey="price"
-                      stroke={isPositive ? 'var(--color-positive)' : 'var(--color-negative)'}
-                      strokeWidth={3}
-                      dot={{ r: 3 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
+              <div style={{ width: '100%', height: 300, position: 'relative' }}>
+                {historyLoading && (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.2)', zIndex: 10 }}>
+                    <Activity size={24} className="spin-loader" style={{ color: 'var(--color-accent)' }} />
+                  </div>
+                )}
+                {chartData.length === 0 ? (
+                  <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    No historical chart data available for timeframe {activeRange}.
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                      <XAxis dataKey="time" stroke="var(--text-subtle)" fontSize={11} tickLine={false} />
+                      <YAxis stroke="var(--text-subtle)" fontSize={11} tickLine={false} domain={['auto', 'auto']} tickFormatter={(val) => `${currSymbol}${val}`} />
+                      <Tooltip formatter={(val) => [`${currSymbol}${Number(val).toFixed(2)}`, 'Close Price']} />
+                      <Line
+                        type="monotone"
+                        dataKey="price"
+                        stroke={isPositive ? 'var(--color-positive)' : 'var(--color-negative)'}
+                        strokeWidth={2.5}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
               </div>
             </div>
 
@@ -391,7 +499,7 @@ function StockDetails() {
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
                 <Layers size={18} color="var(--color-accent)" />
                 <h3 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-main)', margin: 0 }}>
-                  Market Information
+                  Market Statistics
                 </h3>
               </div>
 
@@ -399,35 +507,42 @@ function StockDetails() {
                 <div style={{ padding: '0.85rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-input)' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>Current Price</div>
                   <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-main)', marginTop: '0.25rem' }}>
-                    ₹{currentPrice ? currentPrice.toFixed(2) : 'N/A'}
+                    {currSymbol}{currentPrice ? currentPrice.toFixed(2) : 'N/A'}
                   </div>
                 </div>
 
                 <div style={{ padding: '0.85rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-input)' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>Day High</div>
                   <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--color-positive)', marginTop: '0.25rem' }}>
-                    {stock.high ? `₹${Number(stock.high).toFixed(2)}` : 'N/A'}
+                    {stock.high ? `${currSymbol}${Number(stock.high).toFixed(2)}` : 'N/A'}
                   </div>
                 </div>
 
                 <div style={{ padding: '0.85rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-input)' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>Day Low</div>
                   <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--color-negative)', marginTop: '0.25rem' }}>
-                    {stock.low ? `₹${Number(stock.low).toFixed(2)}` : 'N/A'}
+                    {stock.low ? `${currSymbol}${Number(stock.low).toFixed(2)}` : 'N/A'}
                   </div>
                 </div>
 
                 <div style={{ padding: '0.85rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-input)' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>Opening Price</div>
                   <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-main)', marginTop: '0.25rem' }}>
-                    {stock.open ? `₹${Number(stock.open).toFixed(2)}` : 'N/A'}
+                    {stock.open ? `${currSymbol}${Number(stock.open).toFixed(2)}` : 'N/A'}
                   </div>
                 </div>
 
                 <div style={{ padding: '0.85rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-input)' }}>
                   <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>Previous Close</div>
                   <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-main)', marginTop: '0.25rem' }}>
-                    {stock.previousClose ? `₹${Number(stock.previousClose).toFixed(2)}` : 'N/A'}
+                    {stock.previousClose ? `${currSymbol}${Number(stock.previousClose).toFixed(2)}` : 'N/A'}
+                  </div>
+                </div>
+
+                <div style={{ padding: '0.85rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-input)' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>Trading Volume</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: '800', color: 'var(--text-main)', marginTop: '0.25rem' }}>
+                    {stock.volume ? stock.volume.toLocaleString() : 'N/A'}
                   </div>
                 </div>
               </div>

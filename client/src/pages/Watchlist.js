@@ -4,6 +4,7 @@ import Layout from '../components/layout/Layout';
 import TransactionModal from '../components/modals/TransactionModal';
 import { useToast } from '../context/ToastContext';
 import { useNavigate } from 'react-router-dom';
+import socket from '../socket';
 import {
   Star,
   PlusCircle,
@@ -51,6 +52,37 @@ function Watchlist() {
     fetchWatchlistData(true);
   }, [fetchWatchlistData]);
 
+  // Socket subscription for symbols in watchlist
+  useEffect(() => {
+    if (watchlist.length === 0) return;
+    const symbols = watchlist.map((item) => item.stockSymbol);
+    socket.emit('subscribe:symbols', symbols);
+
+    const handlePriceUpdate = (updatedStock) => {
+      setWatchlist((prev) =>
+        prev.map((item) => {
+          if (item.stockSymbol.toUpperCase() === updatedStock.symbol.toUpperCase()) {
+            return {
+              ...item,
+              currentPrice: updatedStock.currentPrice,
+              change: updatedStock.change,
+              percentChange: updatedStock.percentChange,
+              dataSource: updatedStock.dataSource || 'live',
+            };
+          }
+          return item;
+        })
+      );
+    };
+
+    socket.on('priceUpdate', handlePriceUpdate);
+
+    return () => {
+      socket.emit('unsubscribe:symbols', symbols);
+      socket.off('priceUpdate', handlePriceUpdate);
+    };
+  }, [watchlist]);
+
   const handleAdd = async (e) => {
     e.preventDefault();
     const stockSymbol = symbol.trim().toUpperCase();
@@ -88,6 +120,11 @@ function Watchlist() {
     setIsModalOpen(true);
   };
 
+  const getCurrencySymbol = (item) => {
+    if (item.currency === 'INR' || item.stockSymbol?.endsWith('.NS')) return '₹';
+    return '$';
+  };
+
   // Sorted watchlist items
   const sortedWatchlist = useMemo(() => {
     return [...watchlist].sort((a, b) => {
@@ -97,7 +134,6 @@ function Watchlist() {
       if (sortBy === 'change') {
         return Number(b.percentChange || 0) - Number(a.percentChange || 0);
       }
-      // default: symbol
       return a.stockSymbol.localeCompare(b.stockSymbol);
     });
   }, [watchlist, sortBy]);
@@ -113,7 +149,7 @@ function Watchlist() {
           </h2>
         </div>
         <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-          Monitor prices and daily change for stocks you are tracking.
+          Monitor real live prices and daily changes for tracked US and Indian assets.
         </p>
       </div>
 
@@ -141,7 +177,7 @@ function Watchlist() {
         <form onSubmit={handleAdd} style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
           <input
             type="text"
-            placeholder="Stock Symbol (e.g. AAPL, TSLA)"
+            placeholder="Stock Symbol (e.g. AAPL, TCS, RELIANCE, TSLA)"
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
             required
@@ -204,21 +240,27 @@ function Watchlist() {
               </thead>
               <tbody>
                 {sortedWatchlist.map((item) => {
+                  const currSym = getCurrencySymbol(item);
                   const change = Number(item.change || 0);
                   const percentChange = Number(item.percentChange || 0);
                   const isPositive = change >= 0;
 
                   return (
                     <tr key={item._id}>
-                      <td style={{ fontWeight: '800', fontSize: '0.95rem', color: 'var(--text-main)' }}>
-                        {item.stockSymbol}
+                      <td>
+                        <div style={{ fontWeight: '800', fontSize: '0.95rem', color: 'var(--text-main)' }}>
+                          {item.stockSymbol}
+                        </div>
+                        {item.name && item.name !== item.stockSymbol && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.name}</div>
+                        )}
                       </td>
                       <td style={{ fontWeight: '700', color: 'var(--text-main)' }}>
-                        ₹{Number(item.currentPrice || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {currSym}{Number(item.currentPrice || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </td>
                       <td>
                         <span style={{ fontWeight: '700', color: isPositive ? 'var(--color-positive)' : 'var(--color-negative)' }}>
-                          {isPositive ? '+₹' : '-₹'}
+                          {isPositive ? `+${currSym}` : `-${currSym}`}
                           {Math.abs(change).toFixed(2)}
                         </span>
                       </td>
@@ -255,6 +297,7 @@ function Watchlist() {
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: '0.3rem',
+                              cursor: 'pointer',
                             }}
                             title="View Stock Details"
                           >
@@ -275,6 +318,7 @@ function Watchlist() {
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: '0.3rem',
+                              cursor: 'pointer',
                             }}
                             title="Buy Shares"
                           >

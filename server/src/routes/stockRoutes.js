@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getStock, searchStocks } = require('../controllers/stockController');
+const { getStock, getStockHistory, searchStocks } = require('../controllers/stockController');
 
-// Search route must be defined before symbol param route
+// Static routes must come before parametric routes
 router.get('/search', searchStocks);
+router.get('/:symbol/history', getStockHistory);
 router.get('/:symbol', getStock);
 
 module.exports = router;

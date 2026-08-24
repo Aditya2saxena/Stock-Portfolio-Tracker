@@ -17,7 +17,7 @@ exports.addToWatchlist = async (req, res) => {
 
     const watchlistItem = await Watchlist.create({
       userId: req.user.id,
-      stockSymbol,
+      stockSymbol: stockSymbol.toUpperCase(),
     });
 
     res.status(201).json(watchlistItem);
@@ -38,19 +38,24 @@ exports.getWatchlist = async (req, res) => {
           return {
             _id: item._id,
             stockSymbol: item.stockSymbol,
+            name: stockData.name || item.stockSymbol,
             currentPrice: stockData.currentPrice,
             change: stockData.change,
             percentChange: stockData.percentChange,
+            currency: stockData.currency || 'USD',
+            exchange: stockData.exchange || 'US',
             dataSource: stockData.dataSource,
+            marketStatus: stockData.marketStatus || 'CLOSED',
           };
         } catch (error) {
-          // Is stock ka data bilkul nahi mila — isse poori watchlist crash nahi hogi
           return {
             _id: item._id,
             stockSymbol: item.stockSymbol,
+            name: item.stockSymbol,
             currentPrice: null,
             change: null,
             percentChange: null,
+            currency: 'USD',
             dataSource: 'unavailable',
             error: 'Price data unavailable',
           };

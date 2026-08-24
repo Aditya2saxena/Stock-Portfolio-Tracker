@@ -57,7 +57,7 @@ exports.getPortfolio = async (req, res) => {
       portfolioItems.map(async (item) => {
         try {
           const stockData = await getStockPrice(item.stockSymbol);
-          const currentPrice = stockData.currentPrice;
+          const currentPrice = Number(stockData.currentPrice || 0);
 
           const investment = item.buyPrice * item.quantity;
           const currentValue = currentPrice * item.quantity;
@@ -71,26 +71,37 @@ exports.getPortfolio = async (req, res) => {
           return {
             _id: item._id,
             stockSymbol: item.stockSymbol,
+            name: stockData.name || item.stockSymbol,
             quantity: item.quantity,
             buyPrice: item.buyPrice,
             currentPrice,
+            change: stockData.change || 0,
+            percentChange: stockData.percentChange || 0,
             investment,
             currentValue,
             profitLoss,
             percentageReturn,
-            dataSource: stockData.dataSource || stockData.source || 'live',
+            currency: stockData.currency || (item.stockSymbol.endsWith('.NS') ? 'INR' : 'USD'),
+            exchange: stockData.exchange || 'US',
+            dataSource: stockData.dataSource || 'live',
+            lastUpdated: stockData.lastUpdated || stockData.timestamp,
+            marketStatus: stockData.marketStatus || 'CLOSED',
           };
         } catch (error) {
           return {
             _id: item._id,
             stockSymbol: item.stockSymbol,
+            name: item.stockSymbol,
             quantity: item.quantity,
             buyPrice: item.buyPrice,
             currentPrice: null,
+            change: 0,
+            percentChange: 0,
             investment: item.buyPrice * item.quantity,
             currentValue: 0,
             profitLoss: 0,
             percentageReturn: '0.00',
+            currency: item.stockSymbol.endsWith('.NS') ? 'INR' : 'USD',
             dataSource: 'unavailable',
             error: 'Price data unavailable',
           };

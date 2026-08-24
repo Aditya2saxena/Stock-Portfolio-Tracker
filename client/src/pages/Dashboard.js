@@ -88,12 +88,23 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Socket.io real-time updates
+  // Socket.io real-time updates — subscribe portfolio symbols
   useEffect(() => {
+    if (portfolio.length === 0) return;
+
+    // Notify server which symbols we need updates for
+    const symbols = portfolio.map((item) => item.stockSymbol);
+    socket.emit('subscribe:symbols', symbols);
+
     const handlePriceUpdate = (updatedStock) => {
       setPortfolio((prevPortfolio) =>
         prevPortfolio.map((item) => {
-          if (item.stockSymbol === updatedStock.symbol) {
+          // Match by display symbol or full normalized symbol (e.g. TCS matches TCS.NS updates)
+          const isMatch =
+            item.stockSymbol.toUpperCase() === updatedStock.symbol?.toUpperCase() ||
+            item.stockSymbol.toUpperCase() === updatedStock.fullSymbol?.toUpperCase();
+
+          if (isMatch) {
             const currentPrice = Number(updatedStock.currentPrice);
             const investment = Number(item.buyPrice || 0) * Number(item.quantity || 0);
             const currentValue = currentPrice * Number(item.quantity || 0);
@@ -109,6 +120,7 @@ function Dashboard() {
               profitLoss,
               percentageReturn,
               dataSource: updatedStock.dataSource || 'live',
+              marketStatus: updatedStock.marketStatus,
             };
           }
           return item;
@@ -121,7 +133,8 @@ function Dashboard() {
     return () => {
       socket.off('priceUpdate', handlePriceUpdate);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portfolio.length]);
 
   // Calculations
   const totalInvestment = useMemo(() => {

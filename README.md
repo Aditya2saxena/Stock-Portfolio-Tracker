@@ -1,81 +1,56 @@
-# 📈 Stock Portfolio Tracker
+# 📈 Real Market Data Stock Portfolio Tracker
 
-A real-time stock portfolio management application built with the MERN stack (MongoDB, Express, React, Node.js). Track holdings, execute buy/sell orders, monitor live prices, set price alerts, and analyze portfolio diversification — all in one dashboard.
-
-**Live Demo:** [Add your deployed link here]
-**Repository:** https://github.com/Aditya2saxena/Stock-Portfolio-Tracker
+A production-quality, real-market-data-driven stock portfolio management application built with the MERN stack (MongoDB, Express, React, Node.js). Track holdings across both **US** and **Indian (NSE/BSE)** markets with real live stock quotes, OHLC historical charts, weighted-average cost basis calculations, Socket.IO real-time price streaming, price alerts, and analytics.
 
 ---
 
-## ✨ Features
+## ✨ Key Features & Enhancements
 
-- 🔐 **Authentication** — JWT-based login/register with bcrypt password hashing
-- 💼 **Portfolio Management** — Add/remove holdings with automatic weighted-average cost basis calculation
-- 📊 **Live Stock Prices** — Real-time market data via Alpha Vantage API
-- ⚡ **Real-Time Updates** — Socket.io streams price updates to the dashboard without page refresh
-- 🛡️ **3-Level API Fallback** — Live data → cached data → demo data, so the app never breaks even if the external API rate-limits
-- 💹 **Buy/Sell Engine** — Full transaction system with oversell protection and weighted-average price recalculation
-- 📜 **Transaction History** — Filterable ledger (All/Buy/Sell) with volume summaries
-- ⭐ **Watchlist** — Track stocks without owning them, sortable by price/symbol/change
-- 🔔 **Price Alerts** — Set target price triggers (above/below); get notified automatically when hit
-- 📈 **Portfolio Analytics** — Herfindahl-Hirschman Index (HHI) diversification score, allocation breakdown, historical performance chart
-- 🌗 **Dark/Light Mode** — Theme toggle with persistence
-- 📱 **Responsive UI** — Works across desktop, tablet, and mobile
+- 🌐 **Dual Market Support** — Native quote and chart data for both US stocks (`AAPL`, `MSFT`, `AMZN`, `GOOGL`, `TSLA`, `NVDA`, `META`) and Indian stocks (`TCS`, `INFY`, `RELIANCE`, `HDFCBANK`, `ICICIBANK`, `TATAMOTORS`, `SBIN`, `WIPRO`).
+- 🔀 **Symbol Normalization Layer** — Dedicated service normalizing inputs like `TCS`, `TCS:NSE`, `TCS.NS`, `RELIANCE`, `RELIANCE.NS`, and `AAPL` without code scattering.
+- ⚡ **Pooled Socket.IO Updates** — Client socket subscription model (`subscribe:symbols`) where the backend pools requested symbols and broadcasts updates without triggering duplicate external API requests.
+- 🛡️ **5-Level Fallback Strategy** — Live External Market Provider → Fresh Cache → Stale Cache → Labeled Demo Fallback → Controlled Error, protecting against API outages.
+- 📊 **Real Historical OHLC Charts** — Replaced mock data with real time-series chart data (`1D`, `1W`, `1M`, `3M`, `6M`, `1Y`).
+- 🏷️ **Data Source & Market Status Indicators** — UI clearly displays `LIVE`, `CACHED` ("Last updated X mins ago"), or `DEMO` ("Demo data — live market data unavailable") badges along with exchange market state (`OPEN`, `CLOSED`, `PRE`, `POST`).
+- 💱 **Multi-Currency Support** — Dynamic currency formatting (`₹` for INR / NSE/BSE stocks, `$` for USD / US stocks).
+- 💼 **Portfolio P/L Engine** — Automated weighted-average cost basis recalculation, invested amount, market value, P/L, return %, top gainers, and top losers.
+- 🔍 **Symbol Search** — Fast cached search across US and Indian equity markets.
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Tech Stack & Provider Architecture
 
 | Layer | Technology |
 |---|---|
-| Frontend | React, React Router, Recharts, Socket.io-client, Axios, lucide-react |
-| Backend | Node.js, Express.js |
-| Database | MongoDB with Mongoose |
-| Auth | JWT + bcrypt |
-| Real-time | Socket.io |
-| Market Data | Alpha Vantage API |
+| Frontend | React 19, React Router v7, Recharts, Socket.io-client, Axios, lucide-react |
+| Backend | Node.js, Express 5 |
+| Database | MongoDB with Mongoose 9 |
+| Real-time | Socket.io 4 (Pooled Symbol Subscription Model) |
+| Caching | In-Memory CacheService with Multi-TTL (Quotes: 60s, History: 15m, Search: 1h) |
+| Market Data Provider | Server-side Abstraction Layer (`marketDataProvider.js`) powering Yahoo Finance & REST fallbacks |
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Recommended Data Flow & Architecture
 
 ```
-React Dashboard
-      ↓
-Express REST API  ←────────────→  Socket.io (real-time price stream)
-      ↓
-MongoDB (Users, Portfolio, Transactions, Watchlist, Alerts, Snapshots)
-      ↓
-Alpha Vantage API
-      ↓
-  Available?
-   ├── Yes → Live price (cached for 5 min to conserve rate limit)
-   └── No  → Last cached price → Demo data (labeled clearly in UI)
-```
-
-**Why the fallback system matters:** Alpha Vantage's free tier allows only 25 requests/day. Rather than letting the app break when the limit is hit, every price lookup falls back gracefully — live data is preferred, stale cache is used if live fails, and clearly-labeled demo data is the last resort. The UI always shows which source is being used (🟢 Live / 🟡 Cached / 🟠 Demo).
-
----
-
-## 📂 Project Structure
-
-```
-stock-portfolio-tracker/
-├── client/                  # React frontend
-│   └── src/
-│       ├── api/             # Axios service layer
-│       ├── context/         # Auth & Theme context providers
-│       ├── pages/           # Route-level pages
-│       └── components/      # Reusable UI components
-│
-└── server/                  # Node/Express backend
-    └── src/
-        ├── config/          # DB connection
-        ├── controllers/     # Route handlers / business logic
-        ├── middleware/      # JWT auth middleware
-        ├── models/          # Mongoose schemas
-        ├── routes/          # API route definitions
-        └── services/        # Stock price fetching + fallback logic
+React Frontend (UI / Charts)
+       ↓
+Express REST API / Socket.IO Client
+       ↓
+Stock Controller / Symbol Normalizer
+       ↓
+Stock Service (Fallback Hierarchy)
+       ↓
+Server-Side Cache (Quote / History / Search TTLs)
+       ↓
+External Market Data Provider (MarketDataProvider Abstraction)
+       ↓
+Cache Storage
+       ↓
+Socket.IO Broadcast Pool / REST Response
+       ↓
+React UI (Data Source Badge + Dynamic Currency)
 ```
 
 ---
@@ -84,8 +59,7 @@ stock-portfolio-tracker/
 
 ### Prerequisites
 - Node.js (v18+)
-- MongoDB Atlas account (free tier)
-- Alpha Vantage API key (free at [alphavantage.co](https://www.alphavantage.co/support/#api-key))
+- MongoDB Atlas or local MongoDB instance
 
 ### 1. Clone the repository
 ```bash
@@ -100,13 +74,20 @@ npm install
 ```
 
 Create a `.env` file in `server/`:
-```
+```env
 PORT=5000
 MONGO_URI=your_mongodb_connection_string
-JWT_SECRET=your_jwt_secret
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key
+JWT_SECRET=your_jwt_secret_key
+CLIENT_URL=http://localhost:3000
+MARKET_DATA_API_KEY=optional_provider_key
 ```
 
+Run tests:
+```bash
+npm test
+```
+
+Start server:
 ```bash
 npm run dev
 ```
@@ -115,53 +96,74 @@ npm run dev
 ```bash
 cd ../client
 npm install
+```
+
+Create a `.env` file in `client/` (optional):
+```env
+REACT_APP_API_URL=http://localhost:5000
+```
+
+Start React app:
+```bash
 npm start
 ```
 
-App runs at `http://localhost:3000`, API at `http://localhost:5000`.
+App runs at `http://localhost:3000`, API server at `http://localhost:5000`.
 
 ---
 
-## 🔑 API Overview
+## 🔑 API Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/auth/register` | Create a new user |
-| POST | `/api/auth/login` | Login, returns JWT |
-| GET | `/api/portfolio` | Get holdings with live P/L |
-| POST | `/api/transactions` | Execute a BUY/SELL order |
-| GET | `/api/transactions` | Get transaction history |
-| GET | `/api/watchlist` | Get watchlist with live prices |
-| GET | `/api/stocks/search?query=` | Search stocks by symbol/name |
-| POST | `/api/alerts` | Create a price alert |
-| GET | `/api/analytics` | Portfolio diversification & performance data |
-
-All routes except register/login require a `Authorization: Bearer <token>` header.
-
----
-
-## 🧠 Key Design Decisions
-
-- **Weighted average cost basis** — Buying the same stock multiple times merges into one holding using `(oldInvestment + newInvestment) / totalQuantity`, matching how real brokerages track average cost.
-- **Rate-limit-aware caching** — Prices are cached for 5 minutes before a fresh API call is made, cutting external API calls by roughly 10x compared to naive polling.
-- **Crash-proof controllers** — If price data is unavailable for one stock, only that item is marked "unavailable" — the rest of the portfolio still loads.
-- **User data isolation** — Every database query is scoped to `req.user.id`, so users can never access another user's portfolio, transactions, or alerts.
+| POST | `/api/auth/register` | User registration |
+| POST | `/api/auth/login` | User authentication (returns JWT) |
+| GET | `/api/stocks/:symbol` | Real stock quote with currency, exchange, marketStatus, dataSource |
+| GET | `/api/stocks/:symbol/history?range=1M` | Historical OHLC chart data (1D, 1W, 1M, 3M, 6M, 1Y) |
+| GET | `/api/stocks/search?query=` | Stock search (US and Indian tickers) |
+| GET | `/api/portfolio` | User portfolio holdings with live prices and P/L calculations |
+| POST | `/api/portfolio` | Add/merge stock holding |
+| PUT | `/api/portfolio/:id` | Update holding quantity/buy price |
+| DELETE | `/api/portfolio/:id` | Remove portfolio holding |
+| GET | `/api/watchlist` | User watchlist with live quotes |
+| POST | `/api/watchlist` | Add symbol to watchlist |
+| DELETE | `/api/watchlist/:symbol` | Remove symbol from watchlist |
+| GET | `/api/transactions` | Order ledger (BUY/SELL transactions) |
+| POST | `/api/transactions` | Execute BUY/SELL transaction |
+| GET | `/api/alerts` | Get user price alerts |
+| POST | `/api/alerts` | Create price alert trigger |
 
 ---
 
-## 🔮 Future Scope
+## ⚡ Socket.IO Event Contract
 
-- Stock news feed integration
-- Multi-currency support
-- CSV export of transaction history
-- Automated tests (Jest/Supertest)
-- CI/CD pipeline
+- **`subscribe:symbols`** (Client → Server): `['AAPL', 'TCS']` - Adds symbols to active server polling pool.
+- **`unsubscribe:symbols`** (Client → Server): `['AAPL']` - Removes symbols from client pool.
+- **`priceUpdate`** (Server → Client): Broadcasts updated stock quote payload.
+- **`priceAlertTriggered`** (Server → Client): Broadcasts alert notification when price target is reached.
+
+---
+
+## 🧪 Testing
+
+Run backend Jest test suite:
+```bash
+cd server
+npm test
+```
+
+Included tests cover:
+- Symbol normalization (`US`, `NSE`, `BSE`, `:NSE` format)
+- Market quote retrieval & cache integration
+- Fallback hierarchy (Live API → Cache → Demo → Error)
+- Historical OHLC data processing
+- Stock search service
 
 ---
 
 ## 📄 License
 
-This project is open source and available under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE).
 
 ---
 

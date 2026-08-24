@@ -30,6 +30,12 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
     }
   };
 
+  const getCurrencySymbol = (item) => {
+    if (item.currency === 'INR' || item.stockSymbol?.endsWith('.NS')) return '₹';
+    if (item.currency === 'USD') return '$';
+    return item.currency === 'INR' ? '₹' : '$';
+  };
+
   return (
     <div className="fintech-card" style={{ padding: '1.25rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
@@ -61,6 +67,7 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
           </thead>
           <tbody>
             {portfolio.map((item) => {
+              const currSym = getCurrencySymbol(item);
               const buyPrice = Number(item.buyPrice || 0);
               const currentPrice = item.currentPrice !== null && item.currentPrice !== undefined ? Number(item.currentPrice) : null;
               const quantity = Number(item.quantity || 0);
@@ -84,6 +91,9 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
                         <span>{item.dataSource || 'live'}</span>
                       </span>
                     </div>
+                    {item.name && item.name !== item.stockSymbol && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{item.name}</div>
+                    )}
                   </td>
 
                   {/* Quantity */}
@@ -91,24 +101,24 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
 
                   {/* Avg Buy Price */}
                   <td style={{ color: 'var(--text-muted)' }}>
-                    ₹{buyPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {currSym}{buyPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
 
                   {/* Current Price */}
                   <td style={{ fontWeight: '700', color: 'var(--text-main)' }}>
                     {currentPrice !== null
-                      ? `₹${currentPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      ? `${currSym}${currentPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                       : 'N/A'}
                   </td>
 
                   {/* Invested */}
                   <td style={{ color: 'var(--text-muted)' }}>
-                    ₹{investment.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {currSym}{investment.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
 
                   {/* Current Value */}
                   <td style={{ fontWeight: '700', color: 'var(--text-main)' }}>
-                    ₹{currentValue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {currSym}{currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </td>
 
                   {/* P/L */}
@@ -119,8 +129,8 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
                         color: isPositive ? 'var(--color-positive)' : 'var(--color-negative)',
                       }}
                     >
-                      {isPositive ? '+₹' : '-₹'}
-                      {Math.abs(profitLoss).toLocaleString('en-IN', {
+                      {isPositive ? `+${currSym}` : `-${currSym}`}
+                      {Math.abs(profitLoss).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
                       })}
