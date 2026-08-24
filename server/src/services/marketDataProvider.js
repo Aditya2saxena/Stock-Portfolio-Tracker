@@ -5,16 +5,16 @@ const yf = new YahooFinance({
   suppressNotices: ['yahooSurvey'],
 });
 
-/**
- * Yahoo Finance chart API fallback.
- *
- * yahoo-finance2 quote() can sometimes fail on hosted/cloud IPs
- * because Yahoo requires a crumb and may return HTTP 429.
- *
- * Chart API does not use the same quote() flow, so we use it
- * as a live quote fallback.
- */
-const YAHOO_CHART_URL = 'https://query1.finance.yahoo.com/v8/finance/chart';
+/*
+|--------------------------------------------------------------------------
+| Yahoo Chart API
+|--------------------------------------------------------------------------
+| Direct Chart API fallback avoids yahoo-finance2 crumb/429 issues.
+|--------------------------------------------------------------------------
+*/
+
+const YAHOO_CHART_URL =
+  'https://query1.finance.yahoo.com/v8/finance/chart';
 
 const YAHOO_HEADERS = {
   'User-Agent':
@@ -22,9 +22,12 @@ const YAHOO_HEADERS = {
   Accept: 'application/json',
 };
 
-/**
- * Calculates start date and interval based on history range.
- */
+/*
+|--------------------------------------------------------------------------
+| Historical Range Configuration
+|--------------------------------------------------------------------------
+*/
+
 function getStartDateForRange(range) {
   const now = new Date();
 
@@ -73,6 +76,7 @@ function getStartDateForRange(range) {
 
     default:
       now.setMonth(now.getMonth() - 1);
+
       return {
         period1: now,
         interval: '1d',
@@ -80,9 +84,434 @@ function getStartDateForRange(range) {
   }
 }
 
-/**
- * Convert Yahoo chart metadata into our common quote format.
- */
+/*
+|--------------------------------------------------------------------------
+| Number Helpers
+|--------------------------------------------------------------------------
+*/
+
+function toNumber(value, fallback = null) {
+  const number = Number(value);
+
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function round(value, decimals = 2) {
+  const number = toNumber(value);
+
+  if (number === null) {
+    return 0;
+  }
+
+  return Number(number.toFixed(decimals));
+}
+
+/*
+|--------------------------------------------------------------------------
+| Determine Market Type
+|--------------------------------------------------------------------------
+*/
+
+function isIndianMarket(normalizedInfo) {
+  const {
+    normalizedSymbol,
+    exchange,
+  } = normalizedInfo;
+
+  const symbol = String(normalizedSymbol || '').toUpperCase();
+  const market = String(exchange || '').toUpperCase();
+
+  return (
+    symbol.endsWith('.NS') ||
+    symbol.endsWith('.BO') ||
+    symbol.endsWith('.BSE') ||
+    market === 'NSE' ||
+    market === 'BSE' ||
+    market === 'NSI'
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Indian Market Status
+|--------------------------------------------------------------------------
+|
+| NSE/BSE:
+|
+| Pre-open     09:00 - 09:15
+| Regular      09:15 - 15:30
+| Post-market  after 15:30
+|
+| For the application we expose:
+|
+| OPEN   = 09:15 - 15:30
+| CLOSED = otherwise
+|
+|--------------------------------------------------------------------------
+*/
+
+function getIndianMarketStatus() {
+  const now = new Date();
+
+  const formatter = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(now);
+
+  const values = {};
+
+  parts.forEach(({ type, value }) => {
+    values[type] = value;
+  });
+
+  const weekday = values.weekday;
+
+  const hour = Number(values.hour);
+  const minute = Number(values.minute);
+
+  const totalMinutes =
+    hour * 60 + minute;
+
+  /*
+   * Weekend
+   */
+  if (
+    weekday === 'Sat' ||
+    weekday === 'Sun'
+  ) {
+    return 'CLOSED';
+  }
+
+  /*
+   * NSE/BSE regular market
+   *
+   * 09:15 <= time < 15:30
+   */
+  if (
+    totalMinutes >= 9 * 60 + 15 &&
+    totalMinutes < 15 * 60 + 30
+  ) {
+    return 'OPEN';
+  }
+
+  return 'CLOSED';
+}
+
+/*
+|--------------------------------------------------------------------------
+| US Market Status
+|--------------------------------------------------------------------------
+|
+| Uses Yahoo market state when available.
+| Additionally handles common Yahoo values.
+|
+|--------------------------------------------------------------------------
+*/
+
+function getUSMarketStatus(yahooMarketState) {
+  const state = String(
+    yahooMarketState || ''
+  ).toUpperCase();
+
+  if (
+    state.includes('REGULAR') ||
+    state === 'OPEN'
+  ) {
+    return 'OPEN';
+  }
+
+  if (
+    state.includes('PRE') ||
+    state.includes('PREMARKET')
+  ) {
+    return 'PRE';
+  }
+
+  if (
+    state.includes('POST') ||
+    state.includes('POSTMARKET')
+  ) {
+    return 'POST';
+  }
+
+  return 'CLOSED';
+}
+
+/*
+|--------------------------------------------------------------------------
+| Final Market Status
+|--------------------------------------------------------------------------
+*/
+
+function getMarketStatus(
+  normalizedInfo,
+  yahooMarketState
+) {
+  if (isIndianMarket(normalizedInfo)) {
+    /*
+     * IMPORTANT:
+     *
+     * Do NOT trust Yahoo's marketState for NSE/BSE.
+     * Hosted/server environments can receive stale CLOSED state.
+     *
+     * Instead calculate NSE/BSE status ourselves using IST.
+     */
+    return getIndianMarketStatus();
+  }
+
+  return getUSMarketStatus(
+    yahooMarketState
+  );
+}
+
+/*
+|--------------------------------------------------------------------------
+| Extract Latest Chart Price
+|--------------------------------------------------------------------------
+|
+| Uses the newest valid close from Yahoo's chart data.
+|
+| This is important because meta.regularMarketPrice can sometimes
+| be slightly stale compared with the newest 5-minute candle.
+|
+|--------------------------------------------------------------------------
+*/
+
+function getLatestChartValues(result) {
+  const output = {
+    currentPrice: null,
+    open: null,
+    high: null,
+    low: null,
+    volume: 0,
+    timestamp: null,
+  };
+
+  if (
+    !result ||
+    !Array.isArray(result.timestamp) ||
+    !result.indicators ||
+    !Array.isArray(result.indicators.quote) ||
+    !result.indicators.quote[0]
+  ) {
+    return output;
+  }
+
+  const timestamps =
+    result.timestamp;
+
+  const quoteData =
+    result.indicators.quote[0];
+
+  /*
+   * Find latest valid close.
+   */
+  for (
+    let i = timestamps.length - 1;
+    i >= 0;
+    i -= 1
+  ) {
+    const close =
+      toNumber(
+        quoteData.close?.[i]
+      );
+
+    if (close !== null) {
+      output.currentPrice = close;
+
+      output.timestamp =
+        new Date(
+          timestamps[i] * 1000
+        ).toISOString();
+
+      break;
+    }
+  }
+
+  /*
+   * Aggregate today's chart candles.
+   *
+   * This gives us a proper day's:
+   *
+   * Open
+   * High
+   * Low
+   * Volume
+   *
+   * rather than taking the latest 5-minute candle's OHLC.
+   */
+  const today = new Date();
+
+  const todayYear =
+    today.getUTCFullYear();
+
+  const todayMonth =
+    today.getUTCMonth();
+
+  const todayDate =
+    today.getUTCDate();
+
+  let firstOpen = null;
+  let dayHigh = null;
+  let dayLow = null;
+  let totalVolume = 0;
+
+  for (
+    let i = 0;
+    i < timestamps.length;
+    i += 1
+  ) {
+    const timestamp =
+      timestamps[i];
+
+    const candleDate =
+      new Date(timestamp * 1000);
+
+    /*
+     * We intentionally use UTC here because Yahoo timestamps
+     * are returned as epoch timestamps and converted consistently.
+     */
+    if (
+      candleDate.getUTCFullYear() !==
+        todayYear ||
+      candleDate.getUTCMonth() !==
+        todayMonth ||
+      candleDate.getUTCDate() !==
+        todayDate
+    ) {
+      continue;
+    }
+
+    const open =
+      toNumber(
+        quoteData.open?.[i]
+      );
+
+    const high =
+      toNumber(
+        quoteData.high?.[i]
+      );
+
+    const low =
+      toNumber(
+        quoteData.low?.[i]
+      );
+
+    const volume =
+      toNumber(
+        quoteData.volume?.[i],
+        0
+      );
+
+    if (
+      firstOpen === null &&
+      open !== null
+    ) {
+      firstOpen = open;
+    }
+
+    if (high !== null) {
+      dayHigh =
+        dayHigh === null
+          ? high
+          : Math.max(
+              dayHigh,
+              high
+            );
+    }
+
+    if (low !== null) {
+      dayLow =
+        dayLow === null
+          ? low
+          : Math.min(
+              dayLow,
+              low
+            );
+    }
+
+    totalVolume += volume;
+  }
+
+  /*
+   * If today's aggregation isn't available,
+   * fall back to latest candle.
+   */
+  if (
+    firstOpen === null ||
+    dayHigh === null ||
+    dayLow === null
+  ) {
+    for (
+      let i = timestamps.length - 1;
+      i >= 0;
+      i -= 1
+    ) {
+      const open =
+        toNumber(
+          quoteData.open?.[i]
+        );
+
+      const high =
+        toNumber(
+          quoteData.high?.[i]
+        );
+
+      const low =
+        toNumber(
+          quoteData.low?.[i]
+        );
+
+      if (
+        firstOpen === null &&
+        open !== null
+      ) {
+        firstOpen = open;
+      }
+
+      if (
+        dayHigh === null &&
+        high !== null
+      ) {
+        dayHigh = high;
+      }
+
+      if (
+        dayLow === null &&
+        low !== null
+      ) {
+        dayLow = low;
+      }
+
+      if (
+        firstOpen !== null &&
+        dayHigh !== null &&
+        dayLow !== null
+      ) {
+        break;
+      }
+    }
+  }
+
+  output.open = firstOpen;
+  output.high = dayHigh;
+  output.low = dayLow;
+  output.volume = totalVolume;
+
+  return output;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Build Quote From Yahoo Chart API
+|--------------------------------------------------------------------------
+*/
+
 function buildQuoteFromChartResponse(
   result,
   normalizedInfo
@@ -94,172 +523,190 @@ function buildQuoteFromChartResponse(
     exchange,
   } = normalizedInfo;
 
-  if (!result || !result.meta) {
-    throw new Error(`Invalid Yahoo chart response for ${normalizedSymbol}`);
+  if (
+    !result ||
+    !result.meta
+  ) {
+    throw new Error(
+      `Invalid Yahoo chart response for ${normalizedSymbol}`
+    );
   }
 
-  const meta = result.meta;
+  const meta =
+    result.meta;
 
+  const chartValues =
+    getLatestChartValues(result);
+
+  /*
+   * IMPORTANT:
+   *
+   * Prefer latest chart close.
+   *
+   * Then fall back to Yahoo meta price.
+   */
   const currentPrice =
-    Number(
-      meta.regularMarketPrice ??
-        meta.postMarketPrice ??
-        meta.preMarketPrice ??
-        meta.previousClose
+    chartValues.currentPrice ??
+    toNumber(
+      meta.regularMarketPrice
+    ) ??
+    toNumber(
+      meta.postMarketPrice
+    ) ??
+    toNumber(
+      meta.preMarketPrice
+    ) ??
+    toNumber(
+      meta.previousClose
     );
 
-  if (!Number.isFinite(currentPrice)) {
-    throw new Error(`No valid price returned for ${normalizedSymbol}`);
+  if (
+    currentPrice === null
+  ) {
+    throw new Error(
+      `No valid price returned for ${normalizedSymbol}`
+    );
   }
 
-  const previousClose = Number(
-    meta.previousClose ??
-      meta.chartPreviousClose ??
-      currentPrice
-  );
+  const previousClose =
+    toNumber(
+      meta.previousClose
+    ) ??
+    toNumber(
+      meta.chartPreviousClose
+    ) ??
+    currentPrice;
 
   const change =
-    Number.isFinite(meta.regularMarketPrice) &&
-    Number.isFinite(previousClose)
-      ? meta.regularMarketPrice - previousClose
-      : 0;
+    currentPrice -
+    previousClose;
 
   const percentChange =
     previousClose > 0
-      ? (change / previousClose) * 100
+      ? (change / previousClose) *
+        100
       : 0;
 
-  /**
-   * Try to get today's OHLC values from chart data.
+  /*
+   * Use chart values first.
+   * Fall back to Yahoo metadata.
    */
-  let open = currentPrice;
-  let high = currentPrice;
-  let low = currentPrice;
-  let volume = 0;
+  const open =
+    chartValues.open ??
+    toNumber(
+      meta.regularMarketOpen
+    ) ??
+    currentPrice;
 
-  const chartResult = result;
+  const high =
+    chartValues.high ??
+    toNumber(
+      meta.regularMarketDayHigh
+    ) ??
+    currentPrice;
 
-  if (
-    chartResult &&
-    chartResult.timestamp &&
-    chartResult.indicators &&
-    chartResult.indicators.quote &&
-    chartResult.indicators.quote[0]
-  ) {
-    const quoteData =
-      chartResult.indicators.quote[0];
+  const low =
+    chartValues.low ??
+    toNumber(
+      meta.regularMarketDayLow
+    ) ??
+    currentPrice;
 
-    const lastIndex =
-      chartResult.timestamp.length - 1;
+  const volume =
+    chartValues.volume > 0
+      ? chartValues.volume
+      : toNumber(
+          meta.regularMarketVolume,
+          0
+        );
 
-    const findLatestValid = (array) => {
-      if (!Array.isArray(array)) {
-        return null;
-      }
+  const exchangeName =
+    meta.exchangeName ||
+    meta.fullExchangeName ||
+    exchange;
 
-      for (let i = array.length - 1; i >= 0; i -= 1) {
-        if (
-          array[i] !== null &&
-          array[i] !== undefined &&
-          Number.isFinite(Number(array[i]))
-        ) {
-          return Number(array[i]);
-        }
-      }
+  const yahooMarketState =
+    String(
+      meta.marketState ||
+        ''
+    ).toUpperCase();
 
-      return null;
-    };
-
-    const latestOpen = findLatestValid(quoteData.open);
-    const latestHigh = findLatestValid(quoteData.high);
-    const latestLow = findLatestValid(quoteData.low);
-    const latestVolume = findLatestValid(quoteData.volume);
-
-    if (latestOpen !== null) {
-      open = latestOpen;
-    }
-
-    if (latestHigh !== null) {
-      high = latestHigh;
-    }
-
-    if (latestLow !== null) {
-      low = latestLow;
-    }
-
-    if (latestVolume !== null) {
-      volume = latestVolume;
-    }
-
-    // Avoid unused-index warnings while keeping chart structure explicit.
-    void lastIndex;
-  }
-
-  const marketState = String(
-    meta.marketState || 'CLOSED'
-  ).toUpperCase();
-
-  let marketStatus = marketState;
-
-  if (marketState === 'REGULAR') {
-    marketStatus = 'OPEN';
-  }
+  const marketStatus =
+    getMarketStatus(
+      normalizedInfo,
+      yahooMarketState
+    );
 
   return {
     symbol: displaySymbol,
-    fullSymbol: normalizedSymbol,
+
+    fullSymbol:
+      normalizedSymbol,
+
     name:
       meta.longName ||
       meta.shortName ||
       displaySymbol,
 
-    currentPrice: Number(currentPrice.toFixed(2)),
+    currentPrice:
+      round(currentPrice),
 
-    change: Number(change.toFixed(2)),
+    change:
+      round(change),
 
-    percentChange: Number(
-      percentChange.toFixed(2)
-    ),
+    percentChange:
+      round(percentChange),
 
-    high: Number(high.toFixed(2)),
+    high:
+      round(high),
 
-    low: Number(low.toFixed(2)),
+    low:
+      round(low),
 
-    open: Number(open.toFixed(2)),
+    open:
+      round(open),
 
-    previousClose: Number(
-      previousClose.toFixed(2)
-    ),
+    previousClose:
+      round(previousClose),
 
-    volume: Number.isFinite(volume)
-      ? Math.trunc(volume)
-      : 0,
+    volume:
+      Number.isFinite(volume)
+        ? Math.trunc(volume)
+        : 0,
 
     currency:
       meta.currency ||
       currency ||
-      (normalizedSymbol.endsWith('.NS')
-        ? 'INR'
-        : 'USD'),
+      (
+        normalizedSymbol.endsWith('.NS')
+          ? 'INR'
+          : 'USD'
+      ),
 
     exchange:
-      meta.exchangeName ||
-      meta.fullExchangeName ||
-      exchange,
+      exchangeName,
 
-    dataSource: 'live',
+    dataSource:
+      'live',
 
-    timestamp: new Date().toISOString(),
+    /*
+     * Use chart timestamp if available.
+     * Otherwise use server timestamp.
+     */
+    timestamp:
+      chartValues.timestamp ||
+      new Date().toISOString(),
 
     marketStatus,
   };
 }
 
-/**
- * Direct Yahoo Finance Chart API quote fallback.
- *
- * This bypasses yahoo-finance2 quote()/crumb flow.
- */
+/*
+|--------------------------------------------------------------------------
+| Direct Yahoo Chart API
+|--------------------------------------------------------------------------
+*/
+
 async function fetchQuoteFromYahooChart(
   normalizedInfo
 ) {
@@ -269,20 +716,27 @@ async function fetchQuoteFromYahooChart(
 
   const url =
     `${YAHOO_CHART_URL}/` +
-    encodeURIComponent(normalizedSymbol);
+    encodeURIComponent(
+      normalizedSymbol
+    );
 
-  const response = await axios.get(url, {
-    headers: YAHOO_HEADERS,
+  const response =
+    await axios.get(
+      url,
+      {
+        headers:
+          YAHOO_HEADERS,
 
-    params: {
-      range: '1d',
-      interval: '5m',
-      events: 'div,splits',
-      includePrePost: true,
-    },
+        params: {
+          range: '1d',
+          interval: '5m',
+          events: 'div,splits',
+          includePrePost: true,
+        },
 
-    timeout: 10000,
-  });
+        timeout: 10000,
+      }
+    );
 
   const chartResponse =
     response.data &&
@@ -302,20 +756,30 @@ async function fetchQuoteFromYahooChart(
   );
 }
 
-/**
- * Main Market Data Provider Abstraction Layer.
- */
+/*
+|--------------------------------------------------------------------------
+| Market Data Provider
+|--------------------------------------------------------------------------
+*/
+
 class MarketDataProvider {
-  /**
-   * Fetches real live quote.
+  /*
+   * -----------------------------------------------------------------------
+   * Fetch Live Quote
+   * -----------------------------------------------------------------------
    *
    * Strategy:
    *
    * 1. yahoo-finance2 quote()
    * 2. Direct Yahoo Chart API
-   * 3. Throw error so stockService can use cache/demo fallback
+   * 3. stockService handles cache/demo
+   *
+   * -----------------------------------------------------------------------
    */
-  async fetchQuote(normalizedInfo) {
+
+  async fetchQuote(
+    normalizedInfo
+  ) {
     const {
       normalizedSymbol,
       displaySymbol,
@@ -323,129 +787,159 @@ class MarketDataProvider {
       exchange,
     } = normalizedInfo;
 
-    /**
-     * ---------------------------------------------------------
-     * METHOD 1: yahoo-finance2 quote()
-     * ---------------------------------------------------------
+    /*
+     * ============================================================
+     * METHOD 1
+     * yahoo-finance2 quote()
+     * ============================================================
      */
+
     try {
       const quote =
-        await yf.quote(normalizedSymbol);
+        await yf.quote(
+          normalizedSymbol
+        );
 
       if (
         !quote ||
-        quote.regularMarketPrice === undefined ||
-        quote.regularMarketPrice === null
+        quote.regularMarketPrice ===
+          undefined ||
+        quote.regularMarketPrice ===
+          null
       ) {
         throw new Error(
           `Invalid quote response for ${normalizedSymbol}`
         );
       }
 
-      const currentPrice = parseFloat(
-        quote.regularMarketPrice || 0
-      );
+      const currentPrice =
+        toNumber(
+          quote.regularMarketPrice
+        );
 
-      const previousClose = parseFloat(
-        quote.regularMarketPreviousClose ||
+      const previousClose =
+        toNumber(
+          quote.regularMarketPreviousClose,
           currentPrice
-      );
+        );
 
-      const change = parseFloat(
-        quote.regularMarketChange ??
-          (currentPrice - previousClose)
-      );
+      const change =
+        toNumber(
+          quote.regularMarketChange,
+          currentPrice -
+            previousClose
+        );
 
-      const percentChange = parseFloat(
-        quote.regularMarketChangePercent ??
-          (previousClose > 0
-            ? (change / previousClose) * 100
-            : 0)
-      );
+      const percentChange =
+        toNumber(
+          quote.regularMarketChangePercent,
+          previousClose > 0
+            ? (
+                change /
+                previousClose
+              ) * 100
+            : 0
+        );
 
-      const open = parseFloat(
-        quote.regularMarketOpen ??
+      const open =
+        toNumber(
+          quote.regularMarketOpen,
           currentPrice
-      );
+        );
 
-      const high = parseFloat(
-        quote.regularMarketDayHigh ??
+      const high =
+        toNumber(
+          quote.regularMarketDayHigh,
           currentPrice
-      );
+        );
 
-      const low = parseFloat(
-        quote.regularMarketDayLow ??
+      const low =
+        toNumber(
+          quote.regularMarketDayLow,
           currentPrice
-      );
+        );
 
-      const volume = parseInt(
-        quote.regularMarketVolume || 0,
-        10
-      );
+      const volume =
+        parseInt(
+          quote.regularMarketVolume ||
+            0,
+          10
+        );
 
       const name =
         quote.longName ||
         quote.shortName ||
         displaySymbol;
 
-      const marketState = String(
-        quote.marketState || 'CLOSED'
-      ).toUpperCase();
+      const exchangeName =
+        quote.exchange ||
+        exchange;
 
+      const marketState =
+        String(
+          quote.marketState ||
+            ''
+        ).toUpperCase();
+
+      /*
+       * IMPORTANT:
+       *
+       * For Indian stocks we calculate status ourselves.
+       */
       const marketStatus =
-        marketState.includes('REGULAR')
-          ? 'OPEN'
-          : marketState;
+        getMarketStatus(
+          normalizedInfo,
+          marketState
+        );
 
       return {
-        symbol: displaySymbol,
+        symbol:
+          displaySymbol,
 
-        fullSymbol: normalizedSymbol,
+        fullSymbol:
+          normalizedSymbol,
 
         name,
 
-        currentPrice: Number(
-          currentPrice.toFixed(2)
-        ),
+        currentPrice:
+          round(currentPrice),
 
-        change: Number(
-          change.toFixed(2)
-        ),
+        change:
+          round(change),
 
-        percentChange: Number(
-          percentChange.toFixed(2)
-        ),
+        percentChange:
+          round(percentChange),
 
-        high: Number(
-          high.toFixed(2)
-        ),
+        high:
+          round(high),
 
-        low: Number(
-          low.toFixed(2)
-        ),
+        low:
+          round(low),
 
-        open: Number(
-          open.toFixed(2)
-        ),
+        open:
+          round(open),
 
-        previousClose: Number(
-          previousClose.toFixed(2)
-        ),
+        previousClose:
+          round(previousClose),
 
         volume,
 
         currency:
           quote.currency ||
           currency ||
-          (normalizedSymbol.endsWith('.NS')
-            ? 'INR'
-            : 'USD'),
+          (
+            normalizedSymbol.endsWith(
+              '.NS'
+            )
+              ? 'INR'
+              : 'USD'
+          ),
 
         exchange:
-          quote.exchange ||
-          exchange,
+          exchangeName,
 
-        dataSource: 'live',
+        dataSource:
+          'live',
 
         timestamp:
           new Date().toISOString(),
@@ -458,11 +952,13 @@ class MarketDataProvider {
       );
     }
 
-    /**
-     * ---------------------------------------------------------
-     * METHOD 2: Direct Yahoo Chart API
-     * ---------------------------------------------------------
+    /*
+     * ============================================================
+     * METHOD 2
+     * Direct Yahoo Chart API
+     * ============================================================
      */
+
     try {
       console.log(
         `🔄 Trying Yahoo Chart API fallback for ${normalizedSymbol}...`
@@ -484,19 +980,24 @@ class MarketDataProvider {
       );
     }
 
-    /**
-     * ---------------------------------------------------------
-     * METHOD 3: Let stockService handle cache/demo/error
-     * ---------------------------------------------------------
+    /*
+     * ============================================================
+     * METHOD 3
+     * stockService handles cache/demo/error
+     * ============================================================
      */
+
     throw new Error(
       `All live Yahoo providers failed for ${normalizedSymbol}`
     );
   }
 
-  /**
-   * Fetch historical OHLC time series.
+  /*
+   * -----------------------------------------------------------------------
+   * Historical OHLC
+   * -----------------------------------------------------------------------
    */
+
   async fetchHistoricalData(
     normalizedInfo,
     range = '1M'
@@ -508,7 +1009,10 @@ class MarketDataProvider {
     const {
       period1,
       interval,
-    } = getStartDateForRange(range);
+    } =
+      getStartDateForRange(
+        range
+      );
 
     try {
       const result =
@@ -523,7 +1027,8 @@ class MarketDataProvider {
       if (
         !result ||
         !result.quotes ||
-        result.quotes.length === 0
+        result.quotes.length ===
+          0
       ) {
         return [];
       }
@@ -531,12 +1036,16 @@ class MarketDataProvider {
       return result.quotes
         .filter(
           (q) =>
-            q.close !== null &&
-            q.close !== undefined
+            q.close !==
+              null &&
+            q.close !==
+              undefined
         )
         .map((q) => {
           const dateObj =
-            new Date(q.date);
+            new Date(
+              q.date
+            );
 
           const timeStr =
             range === '1D' ||
@@ -544,58 +1053,64 @@ class MarketDataProvider {
               ? dateObj.toLocaleTimeString(
                   [],
                   {
-                    hour: '2-digit',
-                    minute: '2-digit',
+                    hour:
+                      '2-digit',
+                    minute:
+                      '2-digit',
                   }
                 )
               : dateObj.toLocaleDateString(
                   [],
                   {
-                    month: 'short',
-                    day: 'numeric',
+                    month:
+                      'short',
+                    day:
+                      'numeric',
                   }
                 );
 
           const close =
-            Number(
-              parseFloat(q.close).toFixed(2)
+            round(
+              q.close
             );
 
           return {
-            time: timeStr,
+            time:
+              timeStr,
 
             date:
               dateObj.toISOString(),
 
-            price: close,
+            price:
+              close,
 
             open:
-              q.open !== null &&
-              q.open !== undefined
-                ? Number(
-                    parseFloat(
-                      q.open
-                    ).toFixed(2)
+              q.open !==
+                  null &&
+              q.open !==
+                  undefined
+                ? round(
+                    q.open
                   )
                 : close,
 
             high:
-              q.high !== null &&
-              q.high !== undefined
-                ? Number(
-                    parseFloat(
-                      q.high
-                    ).toFixed(2)
+              q.high !==
+                  null &&
+              q.high !==
+                  undefined
+                ? round(
+                    q.high
                   )
                 : close,
 
             low:
-              q.low !== null &&
-              q.low !== undefined
-                ? Number(
-                    parseFloat(
-                      q.low
-                    ).toFixed(2)
+              q.low !==
+                  null &&
+              q.low !==
+                  undefined
+                ? round(
+                    q.low
                   )
                 : close,
 
@@ -614,10 +1129,15 @@ class MarketDataProvider {
     }
   }
 
-  /**
-   * Symbol Search.
+  /*
+   * -----------------------------------------------------------------------
+   * Symbol Search
+   * -----------------------------------------------------------------------
    */
-  async searchSymbols(query) {
+
+  async searchSymbols(
+    query
+  ) {
     if (
       !query ||
       query.trim() === ''
@@ -643,7 +1163,8 @@ class MarketDataProvider {
           (q) =>
             q.symbol &&
             (
-              q.quoteType === 'EQUITY' ||
+              q.quoteType ===
+                'EQUITY' ||
               q.isYahooFinance
             )
         )
@@ -652,12 +1173,16 @@ class MarketDataProvider {
           let displaySym =
             q.symbol;
 
-          let market = 'US';
+          let market =
+            'US';
 
-          let currency = 'USD';
+          let currency =
+            'USD';
 
           if (
-            q.symbol.endsWith('.NS')
+            q.symbol.endsWith(
+              '.NS'
+            )
           ) {
             displaySym =
               q.symbol.replace(
@@ -665,12 +1190,18 @@ class MarketDataProvider {
                 ''
               );
 
-            market = 'NSE';
+            market =
+              'NSE';
 
-            currency = 'INR';
+            currency =
+              'INR';
           } else if (
-            q.symbol.endsWith('.BSE') ||
-            q.symbol.endsWith('.BO')
+            q.symbol.endsWith(
+              '.BSE'
+            ) ||
+            q.symbol.endsWith(
+              '.BO'
+            )
           ) {
             displaySym =
               q.symbol
@@ -683,13 +1214,16 @@ class MarketDataProvider {
                   ''
                 );
 
-            market = 'BSE';
+            market =
+              'BSE';
 
-            currency = 'INR';
+            currency =
+              'INR';
           }
 
           return {
-            symbol: displaySym,
+            symbol:
+              displaySym,
 
             fullSymbol:
               q.symbol,
