@@ -1,7 +1,11 @@
 import React from 'react';
 import { Trash2, TrendingUp, TrendingDown, Layers } from 'lucide-react';
 
-const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
+const HoldingsTable = ({ portfolio = [], onDelete, loading, showAllocation = false }) => {
+  const totalCurrentValue = portfolio.reduce(
+    (total, item) => total + Number(item.currentValue || 0),
+    0
+  );
   const getBadgeClass = (source) => {
     switch (source) {
       case 'live':
@@ -62,6 +66,7 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
               <th>Current Value</th>
               <th>P/L</th>
               <th>Return</th>
+              {showAllocation && <th>Allocation</th>}
               <th style={{ textAlign: 'right' }}>Action</th>
             </tr>
           </thead>
@@ -77,6 +82,7 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
               const percentageReturn = item.percentageReturn !== undefined ? item.percentageReturn : (investment > 0 ? ((profitLoss / investment) * 100).toFixed(2) : '0.00');
 
               const isPositive = Number(profitLoss) >= 0;
+              const allocation = totalCurrentValue > 0 ? (currentValue / totalCurrentValue) * 100 : 0;
 
               return (
                 <tr key={item._id}>
@@ -151,6 +157,12 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading }) => {
                       {percentageReturn}%
                     </span>
                   </td>
+
+                  {showAllocation && (
+                    <td style={{ fontWeight: '600', color: 'var(--text-main)' }}>
+                      {allocation.toFixed(2)}%
+                    </td>
+                  )}
 
                   {/* Delete Action */}
                   <td style={{ textAlign: 'right' }}>

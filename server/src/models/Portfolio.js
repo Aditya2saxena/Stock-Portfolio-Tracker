@@ -10,6 +10,7 @@ const portfolioSchema = new mongoose.Schema({
     type: String,
     required: true,
     uppercase: true,
+    trim: true,
   },
   quantity: {
     type: Number,
@@ -22,5 +23,7 @@ const portfolioSchema = new mongoose.Schema({
     min: 0,
   },
 }, { timestamps: true });
+
+portfolioSchema.index({ userId: 1, stockSymbol: 1 }, { unique: true });
 
 module.exports = mongoose.model('Portfolio', portfolioSchema);

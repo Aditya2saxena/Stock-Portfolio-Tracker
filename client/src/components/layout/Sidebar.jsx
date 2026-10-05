@@ -33,9 +33,9 @@ const Sidebar = ({ isOpen, onClose }) => {
     },
     {
       name: 'Portfolio',
-      path: '/dashboard',
+      path: '/portfolio',
       icon: Briefcase,
-      active: false,
+      active: location.pathname === '/portfolio',
     },
     {
       name: 'Watchlist',

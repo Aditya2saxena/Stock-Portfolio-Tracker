@@ -7,6 +7,7 @@ import ToastContainer from './components/common/ToastContainer';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
+import Portfolio from './pages/Portfolio';
 import Watchlist from './pages/Watchlist';
 import StockDetails from './pages/StockDetails';
 import Transactions from './pages/Transactions';
@@ -30,6 +31,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/portfolio"
+        element={
+          <ProtectedRoute>
+            <Portfolio />
           </ProtectedRoute>
         }
       />

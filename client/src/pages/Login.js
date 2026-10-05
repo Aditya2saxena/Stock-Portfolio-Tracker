@@ -39,7 +39,8 @@ function Login() {
 
       const res = await API.post("/auth/login", cleanData);
       login(res.data.user, res.data.token);
-      addToast(`👋 Welcome back, ${res.data.user?.name || 'Investor'}!`, 'success');
+      const firstName = res.data.user?.name?.trim().split(/\s+/)[0];
+      addToast(firstName ? `Welcome, ${firstName} 👋` : 'Welcome 👋', 'success');
       navigate("/dashboard");
     } catch (err) {
       const errMsg = err.response?.data?.message || "Login failed. Please try again.";
@@ -89,7 +90,7 @@ function Login() {
             <TrendingUp size={26} />
           </div>
           <h2 style={{ fontSize: "1.6rem", fontWeight: "800", color: "var(--text-main)", marginBottom: "0.25rem" }}>
-            Welcome Back
+            Welcome
           </h2>
           <p style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>
             Log in to manage your stock portfolio

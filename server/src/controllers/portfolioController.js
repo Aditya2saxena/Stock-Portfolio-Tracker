@@ -3,11 +3,29 @@ const Portfolio = require('../models/Portfolio');
 const { getStockPrice } = require('../services/stockService');
 const PortfolioSnapshot = require('../models/PortfolioSnapshot');
 
+const parseHoldingInput = ({ stockSymbol, quantity, buyPrice }) => {
+  const symbol = typeof stockSymbol === 'string' ? stockSymbol.toUpperCase().trim() : '';
+  const parsedQuantity = Number(quantity);
+  const parsedBuyPrice = Number(buyPrice);
+
+  if (!symbol || symbol.length > 20 || !/^[A-Z0-9.^-]+$/.test(symbol)) {
+    return { error: 'Provide a valid stock symbol (up to 20 characters)' };
+  }
+  if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+    return { error: 'Quantity must be greater than 0' };
+  }
+  if (!Number.isFinite(parsedBuyPrice) || parsedBuyPrice < 0) {
+    return { error: 'Buy price must be zero or greater' };
+  }
+  return { symbol, quantity: parsedQuantity, buyPrice: parsedBuyPrice };
+};
+
 // Add stock to portfolio
 exports.addStock = async (req, res) => {
   try {
-    const { stockSymbol, quantity, buyPrice } = req.body;
-    const symbol = stockSymbol.toUpperCase().trim();
+    const input = parseHoldingInput(req.body);
+    if (input.error) return res.status(400).json({ message: input.error });
+    const { symbol, quantity, buyPrice } = input;
 
     // Check if stock already exists in user's portfolio
     const existing = await Portfolio.findOne({
@@ -36,8 +54,8 @@ exports.addStock = async (req, res) => {
     const portfolioItem = await Portfolio.create({
       userId: req.user.id,
       stockSymbol: symbol,
-      quantity,
-      buyPrice,
+      quantity: Number(quantity),
+      buyPrice: Number(buyPrice),
     });
 
     res.status(201).json(portfolioItem);
@@ -124,7 +142,14 @@ exports.updateStock = async (req, res) => {
       return res.status(400).json({ message: 'Invalid portfolio ID format' });
     }
 
-    const { quantity, buyPrice } = req.body;
+    const quantity = Number(req.body.quantity);
+    const buyPrice = Number(req.body.buyPrice);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return res.status(400).json({ message: 'Quantity must be greater than 0' });
+    }
+    if (!Number.isFinite(buyPrice) || buyPrice < 0) {
+      return res.status(400).json({ message: 'Buy price must be zero or greater' });
+    }
 
     const portfolioItem = await Portfolio.findOneAndUpdate(
       {
@@ -137,6 +162,7 @@ exports.updateStock = async (req, res) => {
       },
       {
         new: true,
+        runValidators: true,
       }
     );
 
@@ -186,6 +212,10 @@ exports.deleteStock = async (req, res) => {
 exports.saveSnapshot = async (req, res) => {
   try {
     const { totalInvestment, totalCurrentValue, totalProfitLoss } = req.body;
+    const totals = [totalInvestment, totalCurrentValue, totalProfitLoss].map(Number);
+    if (!totals.every(Number.isFinite) || totals[0] < 0 || totals[1] < 0) {
+      return res.status(400).json({ message: 'Snapshot totals must be valid numbers' });
+    }
 
     const lastSnapshot = await PortfolioSnapshot.findOne({ userId: req.user.id }).sort({ createdAt: -1 });
     if (lastSnapshot) {
@@ -197,9 +227,9 @@ exports.saveSnapshot = async (req, res) => {
 
     const snapshot = await PortfolioSnapshot.create({
       userId: req.user.id,
-      totalInvestment,
-      totalCurrentValue,
-      totalProfitLoss,
+      totalInvestment: totals[0],
+      totalCurrentValue: totals[1],
+      totalProfitLoss: totals[2],
     });
 
     res.status(201).json(snapshot);
