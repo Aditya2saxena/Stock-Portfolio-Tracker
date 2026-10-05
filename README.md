@@ -112,7 +112,7 @@ npm start
 
 The frontend runs at `http://localhost:3000`. The API and Socket.IO server run at `http://localhost:5000`.
 
-## Available scripts
+## Development scripts
 
 ### Backend (`server/`)
 
@@ -120,7 +120,6 @@ The frontend runs at `http://localhost:3000`. The API and Socket.IO server run a
 | --- | --- |
 | `npm run dev` | Start the backend with nodemon |
 | `npm start` | Start the backend with Node.js |
-| `npm test` | Run the Jest suite |
 
 ### Frontend (`client/`)
 
@@ -128,46 +127,35 @@ The frontend runs at `http://localhost:3000`. The API and Socket.IO server run a
 | --- | --- |
 | `npm start` | Start the React development server |
 | `npm run build` | Create a production build |
-| `npm test` | Run the React Scripts test runner |
+## Testing
 
-The stock-service tests call the external market-data provider. Network access may be needed, and provider availability can affect those tests.
+Run the backend Jest suite from `server/`:
+
+```bash
+npm test
+```
+
+Run the frontend test runner from `client/`:
+
+```bash
+npm test
+```
+
+The stock-service tests call the external market-data provider, so network access and provider availability can affect their results.
 
 ## API overview
 
-All API routes are prefixed with `/api`. Routes marked **Auth** require `Authorization: Bearer <token>`.
+The REST API is prefixed with `/api`. Stock search, quotes, and history are public; account and portfolio data require a JWT bearer token.
 
-| Method | Endpoint | Access | Description |
-| --- | --- | --- | --- |
-| `POST` | `/auth/register` | Public | Create an account |
-| `POST` | `/auth/login` | Public | Log in and receive a JWT |
-| `GET` | `/auth/me` | Auth | Get the current user |
-| `PUT` | `/auth/change-password` | Auth | Change the account password |
-| `GET` | `/stocks/search?query=TCS` | Public | Search symbols |
-| `GET` | `/stocks/:symbol` | Public | Get a quote |
-| `GET` | `/stocks/:symbol/history?range=1M` | Public | Get historical chart data |
-| `GET` | `/portfolio` | Auth | Get holdings with quote and P/L data |
-| `POST` | `/portfolio` | Auth | Add or merge a holding |
-| `PUT` | `/portfolio/:id` | Auth | Update holding quantity or buy price |
-| `DELETE` | `/portfolio/:id` | Auth | Remove a holding |
-| `POST` | `/portfolio/snapshot` | Auth | Save a portfolio snapshot (throttled to once per minute) |
-| `GET` | `/portfolio/history` | Auth | Get up to 20 portfolio snapshots |
-| `GET` | `/watchlist` | Auth | List watchlist symbols |
-| `POST` | `/watchlist` | Auth | Add a symbol to the watchlist |
-| `DELETE` | `/watchlist/:symbol` | Auth | Remove a symbol from the watchlist |
-| `GET` | `/transactions` | Auth | List transactions; supports `type`, `stockSymbol`, and `limit` query parameters |
-| `GET` | `/transactions/:id` | Auth | Get a transaction |
-| `POST` | `/transactions` | Auth | Create a `BUY` or `SELL` transaction |
-| `DELETE` | `/transactions/:id` | Auth | Delete a transaction record |
-| `GET` | `/alerts` | Auth | List price alerts |
-| `POST` | `/alerts` | Auth | Create a price alert |
-| `PATCH` | `/alerts/:id` | Auth | Update an alert |
-| `PATCH` | `/alerts/:id/toggle` | Auth | Activate or deactivate an alert |
-| `DELETE` | `/alerts/:id` | Auth | Delete an alert |
-| `GET` | `/notifications` | Auth | List notifications |
-| `PATCH` | `/notifications/:id/read` | Auth | Mark a notification as read |
-| `PATCH` | `/notifications/read-all` | Auth | Mark all notifications as read |
-| `DELETE` | `/notifications/:id` | Auth | Delete a notification |
-| `GET` | `/health` | Public | Check API health |
+Main route groups:
+
+- `/api/auth` — registration, login, current user, and password changes
+- `/api/stocks` — symbol search, quotes, and historical prices
+- `/api/portfolio` — holdings, snapshots, and portfolio history
+- `/api/transactions` — transaction history and `BUY`/`SELL` entries
+- `/api/watchlist` — watchlist management
+- `/api/alerts` and `/api/notifications` — price alerts and notifications
+- `/api/health` — backend health check
 
 ## Socket.IO events
 
