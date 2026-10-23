@@ -25,6 +25,11 @@ const TransactionModal = ({ isOpen, onClose, initialSymbol = '', initialPrice = 
 
   if (!isOpen) return null;
 
+  // Detect currency based on symbol (Indian stocks get ₹, others get $)
+  const KNOWN_INDIAN = ['RELIANCE','TCS','INFY','HDFCBANK','ICICIBANK','TATAMOTORS','SBIN','WIPRO','BHARTIARTL','LT','ITC','AXISBANK','KOTAKBANK','MARUTI','NVDA'];
+  const isIndian = /\.(NS|BO|BSE)$/i.test(stockSymbol) || KNOWN_INDIAN.includes(stockSymbol.toUpperCase());
+  const currSymbol = isIndian ? '₹' : '$';
+
   const totalAmount = (Number(quantity || 0) * Number(price || 0)).toFixed(2);
 
   const handleSubmit = async (e) => {
@@ -231,7 +236,7 @@ const TransactionModal = ({ isOpen, onClose, initialSymbol = '', initialPrice = 
           {/* Execution Price */}
           <div>
             <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
-              Execution Price (₹)
+              Execution Price ({currSymbol})
             </label>
             <input
               type="number"
@@ -262,7 +267,7 @@ const TransactionModal = ({ isOpen, onClose, initialSymbol = '', initialPrice = 
               Total Order Value
             </span>
             <span style={{ fontSize: '1.2rem', fontWeight: '800', color: type === 'BUY' ? 'var(--color-positive)' : 'var(--color-negative)' }}>
-              ₹{Number(totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+              {currSymbol}{Number(totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
             </span>
           </div>
 

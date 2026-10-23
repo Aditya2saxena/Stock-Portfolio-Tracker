@@ -112,7 +112,8 @@ const AddStockForm = ({ onAddStock, submitting, validationError }) => {
                 marginBottom: '0.4rem',
               }}
             >
-              Buy Price (₹)
+              {/* Show ₹ for Indian stocks, $ for US stocks */}
+              Buy Price ({/\.(NS|BO|BSE)$/i.test(formData.stockSymbol) || ['RELIANCE','TCS','INFY','HDFCBANK','ICICIBANK','TATAMOTORS','SBIN','WIPRO','BHARTIARTL'].includes(formData.stockSymbol.toUpperCase()) ? '₹' : '$'})
             </label>
             <input
               type="number"

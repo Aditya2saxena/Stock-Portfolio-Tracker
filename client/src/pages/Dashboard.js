@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   getPortfolio,
   deleteStock,
@@ -54,7 +54,7 @@ function Dashboard() {
 
   const firstName = user?.name ? user.name.split(' ')[0] : 'Investor';
 
-  const fetchDashboardData = async (isInitial = false) => {
+  const fetchDashboardData = useCallback(async (isInitial = false) => {
     try {
       if (isInitial) setLoading(true);
       setError('');
@@ -72,7 +72,7 @@ function Dashboard() {
     } finally {
       if (isInitial) setLoading(false);
     }
-  };
+  }, [addToast]);
 
   useEffect(() => {
     fetchDashboardData(true);
@@ -85,8 +85,7 @@ function Dashboard() {
         console.error('Failed to load snapshot history:', err);
         setValueHistory([]);
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchDashboardData]);
 
   // Socket.io real-time updates — subscribe portfolio symbols
   useEffect(() => {
@@ -133,7 +132,6 @@ function Dashboard() {
     return () => {
       socket.off('priceUpdate', handlePriceUpdate);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [portfolio.length]);
 
   // Calculations

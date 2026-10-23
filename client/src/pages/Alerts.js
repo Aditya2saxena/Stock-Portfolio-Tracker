@@ -7,6 +7,7 @@ import {
 } from '../api/alertService';
 import Layout from '../components/layout/Layout';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 import socket from '../socket';
 import { TableSkeleton } from '../components/common/LoadingSkeleton';
 import {
@@ -31,6 +32,7 @@ function Alerts() {
   const [error, setError] = useState('');
 
   const { addToast } = useToast();
+  const { user } = useAuth();
 
   const fetchAlertsList = useCallback(async (isInitial = false) => {
     try {
@@ -57,6 +59,9 @@ function Alerts() {
   // Listen to Socket.io alert trigger events
   useEffect(() => {
     const handleAlertTriggered = (data) => {
+      // Only show toast/notification to the user whose alert was triggered
+      if (!user || String(data.userId) !== String(user.id)) return;
+
       addToast(`🔔 ALERT: ${data.message}`, 'info');
 
       // Native browser notification if permitted
@@ -74,7 +79,7 @@ function Alerts() {
     return () => {
       socket.off('priceAlertTriggered', handleAlertTriggered);
     };
-  }, [addToast, fetchAlertsList]);
+  }, [addToast, fetchAlertsList, user]);
 
   const handleCreateAlert = async (e) => {
     e.preventDefault();
@@ -200,7 +205,7 @@ function Alerts() {
 
             <div>
               <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-                Target Price (₹)
+                Target Price ({/\.(NS|BO|BSE)$/i.test(symbol) || ['RELIANCE','TCS','INFY','HDFCBANK','ICICIBANK','TATAMOTORS','SBIN','WIPRO','BHARTIARTL','LT','ITC','AXISBANK','KOTAKBANK','MARUTI'].includes(symbol.toUpperCase()) ? '₹' : '$'})
               </label>
               <input
                 type="number"

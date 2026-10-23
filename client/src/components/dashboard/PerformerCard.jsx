@@ -41,7 +41,9 @@ const PerformerCard = ({ title, performer, type = 'best' }) => {
           <div style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: '500' }}>
             P/L:{' '}
             <span style={{ color: badgeColor, fontWeight: '700' }}>
-              {Number(performer.profitLoss) >= 0 ? '+₹' : '-₹'}
+              {Number(performer.profitLoss) >= 0
+                ? `+${performer.currency === 'INR' ? '₹' : '$'}`
+                : `-${performer.currency === 'INR' ? '₹' : '$'}`}
               {Math.abs(Number(performer.profitLoss || 0)).toLocaleString('en-IN', {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,

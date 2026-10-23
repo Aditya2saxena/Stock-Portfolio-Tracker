@@ -36,6 +36,10 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 const PortfolioChart = ({ valueHistory = [] }) => {
   const [activeRange, setActiveRange] = useState('1D');
+  // NOTE: Range selector buttons are currently UI state only.
+  // valueHistory is intraday snapshot data from the current session.
+  // Full historical range filtering (1W/1M/etc.) would require fetching
+  // PortfolioSnapshot records filtered by date from the backend.
   const ranges = ['1D', '1W', '1M', '3M', '6M', '1Y'];
 
   return (
