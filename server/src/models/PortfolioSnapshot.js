@@ -6,17 +6,10 @@ const portfolioSnapshotSchema = new mongoose.Schema({
     ref: 'User',
     required: true,
   },
-  totalInvestment: {
-    type: Number,
-    required: true,
-  },
-  totalCurrentValue: {
-    type: Number,
-    required: true,
-  },
-  totalProfitLoss: {
-    type: Number,
-    required: true,
+  totalsByCurrency: {
+    type: mongoose.Schema.Types.Mixed,
+    required: false,
+    default: {},
   },
 }, { timestamps: true }); // createdAt automatically time-stamp ka kaam karega
 

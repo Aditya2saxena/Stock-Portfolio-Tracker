@@ -109,7 +109,9 @@ function StockDetails() {
     const cleanSym = symbol.toUpperCase();
 
     // Subscribe to symbol update
-    socket.emit('subscribe:symbols', [cleanSym]);
+    const subscribe = () => socket.emit('subscribe:symbols', [cleanSym]);
+    socket.on('connect', subscribe);
+    if (socket.connected) subscribe();
 
     const handlePriceUpdate = (updatedStock) => {
       if (updatedStock.symbol.toUpperCase() === cleanSym || updatedStock.fullSymbol?.toUpperCase() === cleanSym) {
@@ -123,7 +125,8 @@ function StockDetails() {
     socket.on('priceUpdate', handlePriceUpdate);
 
     return () => {
-      socket.emit('unsubscribe:symbols', [cleanSym]);
+      socket.off('connect', subscribe);
+      if (socket.connected) socket.emit('unsubscribe:symbols', [cleanSym]);
       socket.off('priceUpdate', handlePriceUpdate);
     };
   }, [symbol]);

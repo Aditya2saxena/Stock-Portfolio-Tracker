@@ -21,6 +21,7 @@ import {
   CartesianGrid,
   Tooltip,
 } from 'recharts';
+import { getPortfolioTotalsByCurrency, getCurrencySymbol } from '../utils/portfolioTotals';
 
 function Analytics() {
   const [portfolio, setPortfolio] = useState([]);
@@ -28,6 +29,7 @@ function Analytics() {
   const [loading, setLoading] = useState(true);
   const [activeRange, setActiveRange] = useState('1D');
   const [error, setError] = useState('');
+  const snapshotCurrencies = Array.from(new Set(valueHistory.flatMap((point) => Object.keys(point.totalsByCurrency || {}))));
 
   useEffect(() => {
     const fetchData = async () => {
@@ -52,21 +54,11 @@ function Analytics() {
   }, []);
 
   // Performance calculations
-  const totalInvestment = useMemo(() => {
-    return portfolio.reduce((sum, item) => sum + Number(item.investment || 0), 0);
-  }, [portfolio]);
-
-  const totalCurrentValue = useMemo(() => {
-    return portfolio.reduce((sum, item) => sum + Number(item.currentValue || 0), 0);
-  }, [portfolio]);
-
-  const totalProfitLoss = useMemo(() => {
-    return totalCurrentValue - totalInvestment;
-  }, [totalCurrentValue, totalInvestment]);
-
+  const currencyTotals = useMemo(() => getPortfolioTotalsByCurrency(portfolio), [portfolio]);
   const overallReturnPercent = useMemo(() => {
-    return totalInvestment > 0 ? (totalProfitLoss / totalInvestment) * 100 : 0;
-  }, [totalProfitLoss, totalInvestment]);
+    return Object.fromEntries(Object.entries(currencyTotals).filter(([, item]) => item.pricedInvestment > 0)
+      .map(([currency, item]) => [currency, `${(item.profitLoss / item.pricedInvestment * 100) >= 0 ? '+' : ''}${(item.profitLoss / item.pricedInvestment * 100).toFixed(2)}%`]));
+  }, [currencyTotals]);
 
   const { bestPerformer, worstPerformer } = useMemo(() => {
     if (portfolio.length === 0) return { bestPerformer: null, worstPerformer: null };
@@ -79,23 +71,29 @@ function Analytics() {
 
   // Diversification Score (Normalized Herfindahl-Hirschman Index)
   const { diversificationScore, concentrationCategory, topConcentratedStock } = useMemo(() => {
-    if (portfolio.length === 0 || totalCurrentValue <= 0) {
+    if (portfolio.length === 0) {
       return { diversificationScore: 0, concentrationCategory: 'No Holdings', topConcentratedStock: null };
     }
 
-    let hhiSum = 0;
     let maxWeight = 0;
     let topStock = null;
 
-    portfolio.forEach((item) => {
-      const val = Number(item.currentValue || 0);
-      const weight = val / totalCurrentValue;
-      hhiSum += weight * weight;
-      if (weight > maxWeight) {
-        maxWeight = weight;
-        topStock = { symbol: item.stockSymbol, percentage: (weight * 100).toFixed(1) };
-      }
-    });
+    const hhis = Object.keys(currencyTotals).map((currency) => {
+      const bucket = portfolio.filter((item) => (item.currency || 'USD') === currency && Number(item.currentValue) > 0);
+      const total = bucket.reduce((sum, item) => sum + Number(item.currentValue), 0);
+      if (!total) return null;
+      let hhi = 0;
+      bucket.forEach((item) => {
+        const weight = Number(item.currentValue) / total;
+        hhi += weight * weight;
+        if (weight > maxWeight) {
+          maxWeight = weight;
+          topStock = { symbol: item.stockSymbol, percentage: (weight * 100).toFixed(1), currency };
+        }
+      });
+      return hhi;
+    }).filter((value) => value !== null);
+    const hhiSum = hhis.length ? hhis.reduce((sum, value) => sum + value, 0) / hhis.length : 0;
 
     // Score calculation: 100 for perfectly equal diversification, decreases as HHI increases
     const score = Math.min(100, Math.max(0, Math.round((1 - hhiSum) * 100)));
@@ -112,7 +110,7 @@ function Analytics() {
       concentrationCategory: category,
       topConcentratedStock: topStock,
     };
-  }, [portfolio, totalCurrentValue]);
+  }, [portfolio, currencyTotals]);
 
   // Deterministic Insights Generator
   const insights = useMemo(() => {
@@ -172,10 +170,10 @@ function Analytics() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
           {/* Section A: Performance Summary Cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1.25rem' }}>
-            <SummaryCard title="Total Invested" value={totalInvestment} />
-            <SummaryCard title="Current Value" value={totalCurrentValue} />
-            <SummaryCard title="Total P/L" value={totalProfitLoss} isProfitLoss={true} isPositive={totalProfitLoss >= 0} />
-            <SummaryCard title="Overall Return" value={overallReturnPercent} isCurrency={false} percentChange={overallReturnPercent} isPositive={overallReturnPercent >= 0} />
+            <SummaryCard title="Total Invested" value={Object.fromEntries(Object.entries(currencyTotals).map(([currency, value]) => [currency, value.investment]))} />
+            <SummaryCard title="Current Value" value={Object.fromEntries(Object.entries(currencyTotals).filter(([, value]) => value.pricedInvestment > 0).map(([currency, value]) => [currency, value.currentValue]))} />
+            <SummaryCard title="P/L (priced holdings)" value={Object.fromEntries(Object.entries(currencyTotals).filter(([, value]) => value.pricedInvestment > 0).map(([currency, value]) => [currency, value.profitLoss]))} isProfitLoss />
+            <SummaryCard title="Return (priced holdings)" value={overallReturnPercent} isCurrency={false} />
           </div>
 
           {/* Section B: Historical Chart with Range Buttons */}
@@ -219,17 +217,22 @@ function Analytics() {
               </div>
             </div>
 
-            {valueHistory.length > 0 ? (
-              <div style={{ width: '100%', height: 260 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={valueHistory}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
-                    <XAxis dataKey="time" stroke="var(--text-subtle)" fontSize={11} tickLine={false} />
-                    <YAxis stroke="var(--text-subtle)" fontSize={11} tickLine={false} tickFormatter={(v) => `₹${(v / 1000).toFixed(1)}k`} />
-                    <Tooltip formatter={(val) => [`₹${Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 'Portfolio Value']} />
-                    <Line type="monotone" dataKey="value" stroke="var(--color-accent)" strokeWidth={3} dot={{ r: 3 }} />
-                  </LineChart>
-                </ResponsiveContainer>
+            {snapshotCurrencies.length > 0 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                {snapshotCurrencies.map((currency) => (
+                  <div key={currency} style={{ width: '100%', height: 260 }}>
+                    <strong>{currency}</strong>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={valueHistory}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
+                        <XAxis dataKey="time" stroke="var(--text-subtle)" fontSize={11} tickLine={false} />
+                        <YAxis stroke="var(--text-subtle)" fontSize={11} tickLine={false} tickFormatter={(v) => `${getCurrencySymbol(currency)}${(v / 1000).toFixed(1)}k`} />
+                        <Tooltip formatter={(val) => [`${getCurrencySymbol(currency)}${Number(val).toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2 })}`, `${currency} value`]} />
+                        <Line type="monotone" dataKey={`totalsByCurrency.${currency}`} stroke="var(--color-accent)" strokeWidth={3} dot={{ r: 3 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                ))}
               </div>
             ) : (
               <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-subtle)', fontSize: '0.85rem' }}>
@@ -317,26 +320,28 @@ function Analytics() {
                 </thead>
                 <tbody>
                   {portfolio.map((item) => {
-                    const val = Number(item.currentValue || 0);
-                    const alloc = totalCurrentValue > 0 ? ((val / totalCurrentValue) * 100).toFixed(1) : '0.0';
-                    const pl = Number(item.profitLoss || 0);
-                    const ret = Number(item.percentageReturn || 0);
-                    const isPos = pl >= 0;
+                    const val = item.currentValue === null || item.currentValue === undefined ? null : Number(item.currentValue || 0);
+                    const currency = item.currency || 'USD';
+                    const currencyTotal = currencyTotals[currency]?.currentValue || 0;
+                    const alloc = val !== null && currencyTotal > 0 ? ((val / currencyTotal) * 100).toFixed(1) : null;
+                    const pl = item.profitLoss === null || item.profitLoss === undefined ? null : Number(item.profitLoss || 0);
+                    const ret = item.percentageReturn === null || item.percentageReturn === undefined ? null : Number(item.percentageReturn || 0);
+                    const isPos = Number(pl) >= 0;
 
                     return (
                       <tr key={item._id}>
                         <td style={{ fontWeight: '800', color: 'var(--text-main)' }}>{item.stockSymbol}</td>
                         <td style={{ fontWeight: '700', color: 'var(--text-main)' }}>
-                          ₹{val.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          {val === null ? 'N/A' : getCurrencySymbol(currency) + val.toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2 })}
                         </td>
                         <td>
-                          <span style={{ fontWeight: '700', color: 'var(--color-accent)' }}>{alloc}%</span>
+                          <span style={{ fontWeight: '700', color: 'var(--color-accent)' }}>{alloc === null ? 'N/A' : `${alloc}%`}</span>
                         </td>
                         <td style={{ fontWeight: '700', color: isPos ? 'var(--color-positive)' : 'var(--color-negative)' }}>
-                          {isPos ? '+₹' : '-₹'}{Math.abs(pl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          {pl === null ? 'N/A' : (isPos ? '+' : '-') + getCurrencySymbol(currency) + Math.abs(pl).toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2 })}
                         </td>
-                        <td style={{ fontWeight: '700', color: isPos ? 'var(--color-positive)' : 'var(--color-negative)' }}>
-                          {isPos ? '+' : ''}{ret.toFixed(2)}%
+                        <td style={{ fontWeight: '700', color: ret === null ? 'var(--text-muted)' : isPos ? 'var(--color-positive)' : 'var(--color-negative)' }}>
+                          {ret === null ? 'N/A' : `${isPos ? '+' : ''}${ret.toFixed(2)}%`}
                         </td>
                       </tr>
                     );

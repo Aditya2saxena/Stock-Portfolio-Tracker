@@ -1,17 +1,21 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { getTransactions, deleteTransaction } from '../api/transactionService';
+import { getTransactions } from '../api/transactionService';
 import Layout from '../components/layout/Layout';
-import { useToast } from '../context/ToastContext';
 import { TableSkeleton } from '../components/common/LoadingSkeleton';
+import { getCurrencySymbol, isIndianSymbol } from '../utils/portfolioTotals';
+
 import {
   Receipt,
   ArrowUpRight,
   ArrowDownRight,
-  Trash2,
   Filter,
   Search,
   CheckCircle2,
 } from 'lucide-react';
+
+const CurrencyAmounts = ({ values }) => <div>{Object.entries(values).map(([currency, amount]) => (
+  <div key={currency}>{getCurrencySymbol(currency)}{amount.toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2 })}</div>
+))}</div>;
 
 function Transactions() {
   const [transactions, setTransactions] = useState([]);
@@ -19,8 +23,6 @@ function Transactions() {
   const [searchSymbol, setSearchSymbol] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const { addToast } = useToast();
 
   const fetchTransactionsList = useCallback(async (isInitial = false) => {
     try {
@@ -44,24 +46,15 @@ function Transactions() {
     fetchTransactionsList(true);
   }, [fetchTransactionsList]);
 
-  const handleDelete = async (id, symbol) => {
-    try {
-      await deleteTransaction(id);
-      addToast(`🗑 Transaction record for ${symbol} deleted`, 'info');
-      await fetchTransactionsList();
-    } catch (err) {
-      addToast('❌ Failed to delete transaction', 'error');
-    }
-  };
-
   // Transaction Summaries
   const { totalBuyVolume, totalSellVolume } = useMemo(() => {
-    let buySum = 0;
-    let sellSum = 0;
+    const buySum = {};
+    const sellSum = {};
     transactions.forEach((tx) => {
       const amt = Number(tx.totalAmount || 0);
-      if (tx.type === 'BUY') buySum += amt;
-      else if (tx.type === 'SELL') sellSum += amt;
+      const currency = tx.currency || (isIndianSymbol(tx.stockSymbol) ? 'INR' : 'USD');
+      const bucket = tx.type === 'BUY' ? buySum : sellSum;
+      bucket[currency] = (bucket[currency] || 0) + amt;
     });
     return { totalBuyVolume: buySum, totalSellVolume: sellSum };
   }, [transactions]);
@@ -93,14 +86,14 @@ function Transactions() {
         <div className="fintech-card" style={{ padding: '1rem 1.25rem' }}>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '600' }}>Total BUY Volume</div>
           <div style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-positive)', marginTop: '0.2rem' }}>
-            ₹{totalBuyVolume.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            <CurrencyAmounts values={totalBuyVolume} />
           </div>
         </div>
 
         <div className="fintech-card" style={{ padding: '1rem 1.25rem' }}>
           <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '600' }}>Total SELL Volume</div>
           <div style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-negative)', marginTop: '0.2rem' }}>
-            ₹{totalSellVolume.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            <CurrencyAmounts values={totalSellVolume} />
           </div>
         </div>
       </div>
@@ -207,7 +200,7 @@ function Transactions() {
                   <th>Price</th>
                   <th>Total Amount</th>
                   <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Action</th>
+          <th style={{ textAlign: 'right' }}>Record</th>
                 </tr>
               </thead>
               <tbody>
@@ -215,6 +208,7 @@ function Transactions() {
                   const isBuy = tx.type === 'BUY';
                   const Icon = isBuy ? ArrowUpRight : ArrowDownRight;
                   const dateStr = tx.createdAt ? new Date(tx.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : 'N/A';
+                  const currency = tx.currency || (isIndianSymbol(tx.stockSymbol) ? 'INR' : 'USD');
 
                   return (
                     <tr key={tx._id}>
@@ -239,10 +233,10 @@ function Transactions() {
                       </td>
                       <td style={{ fontWeight: '600', color: 'var(--text-main)' }}>{tx.quantity}</td>
                       <td style={{ color: 'var(--text-main)' }}>
-                        ₹{Number(tx.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {getCurrencySymbol(currency)}{Number(tx.price).toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2 })}
                       </td>
                       <td style={{ fontWeight: '800', color: isBuy ? 'var(--color-positive)' : 'var(--color-negative)' }}>
-                        {isBuy ? '+' : '-'}₹{Number(tx.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {isBuy ? '+' : '-'}{getCurrencySymbol(currency)}{Number(tx.totalAmount).toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2 })}
                       </td>
                       <td>
                         <span className="badge badge-live">
@@ -250,16 +244,7 @@ function Transactions() {
                           Executed
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button
-                          onClick={() => handleDelete(tx._id, tx.stockSymbol)}
-                          className="btn-danger"
-                          title="Delete transaction log"
-                        >
-                          <Trash2 size={14} />
-                          <span>Delete</span>
-                        </button>
-                      </td>
+                      <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>Immutable</td>
                     </tr>
                   );
                 })}

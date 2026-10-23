@@ -1,6 +1,7 @@
 import React from 'react';
 import { History, ArrowUpRight, ArrowDownRight, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { getCurrencySymbol, isIndianSymbol } from '../../utils/portfolioTotals';
 
 const RecentTransactions = ({ transactions = [] }) => {
   return (
@@ -52,6 +53,7 @@ const RecentTransactions = ({ transactions = [] }) => {
             const badgeColor = isBuy ? 'var(--color-positive)' : 'var(--color-negative)';
             const bgColor = isBuy ? 'var(--color-positive-bg)' : 'var(--color-negative-bg)';
             const timeAgo = item.createdAt ? new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            const currency = item.currency || (isIndianSymbol(item.stockSymbol) ? 'INR' : 'USD');
 
             return (
               <div
@@ -99,14 +101,14 @@ const RecentTransactions = ({ transactions = [] }) => {
                       </span>
                     </div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
-                      {item.quantity} {item.quantity === 1 ? 'share' : 'shares'} @ ₹{Number(item.price).toFixed(2)}
+                      {item.quantity} {item.quantity === 1 ? 'share' : 'shares'} @ {getCurrencySymbol(currency)}{Number(item.price).toFixed(2)}
                     </div>
                   </div>
                 </div>
 
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontWeight: '700', fontSize: '0.9rem', color: isBuy ? 'var(--color-positive)' : 'var(--color-negative)' }}>
-                    {isBuy ? '+' : '-'}₹{Number(item.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    {isBuy ? '+' : '-'}{getCurrencySymbol(currency)}{Number(item.totalAmount).toLocaleString(currency === 'INR' ? 'en-IN' : 'en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-subtle)', marginTop: '0.1rem' }}>
                     {timeAgo}

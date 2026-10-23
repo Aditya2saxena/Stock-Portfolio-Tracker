@@ -1,17 +1,18 @@
 const PriceAlert = require('../models/PriceAlert');
 const Notification = require('../models/Notification');
+const { normalizeSymbol } = require('../utils/symbolNormalizer');
 
 exports.checkPriceAlerts = async (stockData, io = null) => {
-  if (!stockData || !stockData.symbol || !stockData.currentPrice) return;
+  if (!stockData || !stockData.symbol || !stockData.currentPrice || stockData.dataSource === 'demo') return;
 
   try {
-    const symbol = stockData.symbol.toUpperCase();
-    const cleanSymbol = symbol.replace('.NS', '').replace('.BSE', '');
+    const normalizedInfo = normalizeSymbol(stockData.fullSymbol || stockData.symbol);
+    const symbol = normalizedInfo.normalizedSymbol;
     const currentPrice = Number(stockData.currentPrice);
 
     // Find all active alerts for this symbol
     const activeAlerts = await PriceAlert.find({
-      stockSymbol: { $in: [symbol, cleanSymbol] },
+      stockSymbol: { $in: [symbol, normalizedInfo.displaySymbol] },
       isActive: true,
     });
 
@@ -32,7 +33,8 @@ exports.checkPriceAlerts = async (stockData, io = null) => {
         await alert.save();
 
         const title = `🔔 Price Alert Triggered: ${alert.stockSymbol}`;
-        const message = `${alert.stockSymbol} is now ₹${currentPrice.toFixed(2)} (${alert.condition.toLowerCase()} target ₹${alert.targetPrice.toFixed(2)})`;
+        const currencySymbol = stockData.currency === 'INR' ? '₹' : '$';
+        const message = `${alert.stockSymbol} is now ${currencySymbol}${currentPrice.toFixed(2)} (${alert.condition.toLowerCase()} target ${currencySymbol}${alert.targetPrice.toFixed(2)})`;
 
         // Create Notification Record
         const notification = await Notification.create({
@@ -63,7 +65,7 @@ exports.checkPriceAlerts = async (stockData, io = null) => {
             title,
             message,
           };
-          io.emit('priceAlertTriggered', payload);
+          io.to(`user:${alert.userId}`).emit('priceAlertTriggered', payload);
         }
       }
     }

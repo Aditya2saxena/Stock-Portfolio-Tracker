@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Portfolio = require('../models/Portfolio');
 const { getStockPrice } = require('../services/stockService');
 const PortfolioSnapshot = require('../models/PortfolioSnapshot');
+const { normalizeSymbol } = require('../utils/symbolNormalizer');
 
 const parseHoldingInput = ({ stockSymbol, quantity, buyPrice }) => {
   const symbol = typeof stockSymbol === 'string' ? stockSymbol.toUpperCase().trim() : '';
@@ -17,7 +18,9 @@ const parseHoldingInput = ({ stockSymbol, quantity, buyPrice }) => {
   if (!Number.isFinite(parsedBuyPrice) || parsedBuyPrice < 0) {
     return { error: 'Buy price must be zero or greater' };
   }
-  return { symbol, quantity: parsedQuantity, buyPrice: parsedBuyPrice };
+  const normalizedSymbol = normalizeSymbol(symbol).normalizedSymbol;
+  if (!normalizedSymbol) return { error: 'Provide a valid stock symbol' };
+  return { symbol: normalizedSymbol, quantity: parsedQuantity, buyPrice: parsedBuyPrice };
 };
 
 // Add stock to portfolio
@@ -30,10 +33,11 @@ exports.addStock = async (req, res) => {
     // Check if stock already exists in user's portfolio
     const existing = await Portfolio.findOne({
       userId: req.user.id,
-      stockSymbol: symbol,
+      stockSymbol: { $in: [symbol, normalizeSymbol(symbol).displaySymbol] },
     });
 
     if (existing) {
+      existing.stockSymbol = symbol;
       // Calculate weighted average buy price
       const oldInvestment = existing.buyPrice * existing.quantity;
       const newInvestment = buyPrice * quantity;
@@ -75,9 +79,31 @@ exports.getPortfolio = async (req, res) => {
       portfolioItems.map(async (item) => {
         try {
           const stockData = await getStockPrice(item.stockSymbol);
-          const currentPrice = Number(stockData.currentPrice || 0);
-
           const investment = item.buyPrice * item.quantity;
+          const quoteUnavailable = ['error', 'demo'].includes(stockData.dataSource) || !Number(stockData.currentPrice);
+          const currentPrice = quoteUnavailable ? null : Number(stockData.currentPrice);
+          if (quoteUnavailable) {
+            return {
+              _id: item._id,
+              stockSymbol: item.stockSymbol,
+              name: stockData.name || item.stockSymbol,
+              quantity: item.quantity,
+              buyPrice: item.buyPrice,
+              currentPrice: null,
+              change: 0,
+              percentChange: 0,
+              investment,
+              currentValue: null,
+              profitLoss: null,
+              percentageReturn: null,
+              currency: stockData.currency || (item.stockSymbol.endsWith('.NS') ? 'INR' : 'USD'),
+              exchange: stockData.exchange || 'US',
+              dataSource: stockData.dataSource || 'unavailable',
+              lastUpdated: stockData.lastUpdated || stockData.timestamp,
+              marketStatus: stockData.marketStatus || 'CLOSED',
+              error: stockData.error || 'Price data unavailable',
+            };
+          }
           const currentValue = currentPrice * item.quantity;
           const profitLoss = currentValue - investment;
 
@@ -86,7 +112,7 @@ exports.getPortfolio = async (req, res) => {
               ? ((profitLoss / investment) * 100).toFixed(2)
               : '0.00';
 
-          return {
+        return {
             _id: item._id,
             stockSymbol: item.stockSymbol,
             name: stockData.name || item.stockSymbol,
@@ -116,9 +142,9 @@ exports.getPortfolio = async (req, res) => {
             change: 0,
             percentChange: 0,
             investment: item.buyPrice * item.quantity,
-            currentValue: 0,
-            profitLoss: 0,
-            percentageReturn: '0.00',
+            currentValue: null,
+            profitLoss: null,
+            percentageReturn: null,
             currency: item.stockSymbol.endsWith('.NS') ? 'INR' : 'USD',
             dataSource: 'unavailable',
             error: 'Price data unavailable',
@@ -211,12 +237,6 @@ exports.deleteStock = async (req, res) => {
 // Snapshot save (throttled to 60s)
 exports.saveSnapshot = async (req, res) => {
   try {
-    const { totalInvestment, totalCurrentValue, totalProfitLoss } = req.body;
-    const totals = [totalInvestment, totalCurrentValue, totalProfitLoss].map(Number);
-    if (!totals.every(Number.isFinite) || totals[0] < 0 || totals[1] < 0) {
-      return res.status(400).json({ message: 'Snapshot totals must be valid numbers' });
-    }
-
     const lastSnapshot = await PortfolioSnapshot.findOne({ userId: req.user.id }).sort({ createdAt: -1 });
     if (lastSnapshot) {
       const secondsSinceLastSnapshot = (Date.now() - lastSnapshot.createdAt.getTime()) / 1000;
@@ -225,12 +245,25 @@ exports.saveSnapshot = async (req, res) => {
       }
     }
 
-    const snapshot = await PortfolioSnapshot.create({
-      userId: req.user.id,
-      totalInvestment: totals[0],
-      totalCurrentValue: totals[1],
-      totalProfitLoss: totals[2],
-    });
+    const holdings = await Portfolio.find({ userId: req.user.id });
+    const totalsByCurrency = {};
+    await Promise.all(holdings.map(async (holding) => {
+      const stock = await getStockPrice(holding.stockSymbol);
+      if (!stock || ['error', 'demo'].includes(stock.dataSource) || !Number(stock.currentPrice)) return;
+      const currency = stock.currency || (holding.stockSymbol.endsWith('.NS') ? 'INR' : 'USD');
+      const bucket = totalsByCurrency[currency] || { investment: 0, currentValue: 0, profitLoss: 0 };
+      const investment = holding.buyPrice * holding.quantity;
+      const currentValue = Number(stock.currentPrice) * holding.quantity;
+      bucket.investment += investment;
+      bucket.currentValue += currentValue;
+      bucket.profitLoss += currentValue - investment;
+      totalsByCurrency[currency] = bucket;
+    }));
+
+    if (!Object.keys(totalsByCurrency).length) {
+      return res.status(200).json({ message: 'Skipped: no priced holdings', skipped: true });
+    }
+    const snapshot = await PortfolioSnapshot.create({ userId: req.user.id, totalsByCurrency });
 
     res.status(201).json(snapshot);
   } catch (error) {
@@ -247,7 +280,8 @@ exports.getSnapshotHistory = async (req, res) => {
 
     const ordered = snapshots.reverse().map((s) => ({
       time: new Date(s.createdAt).toLocaleTimeString(),
-      value: s.totalCurrentValue,
+      date: s.createdAt,
+      totalsByCurrency: s.totalsByCurrency || null,
     }));
 
     res.json(ordered);

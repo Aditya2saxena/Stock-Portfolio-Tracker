@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const PriceAlert = require('../models/PriceAlert');
 const { getStockPrice } = require('../services/stockService');
 const { checkPriceAlerts } = require('../services/alertService');
+const { normalizeSymbol } = require('../utils/symbolNormalizer');
 
 // Get all alerts for authenticated user
 exports.getAlerts = async (req, res) => {
@@ -40,7 +41,8 @@ exports.createAlert = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Stock symbol is required' });
     }
 
-    const symbol = stockSymbol.toUpperCase().trim();
+    const symbol = normalizeSymbol(stockSymbol).normalizedSymbol;
+    if (!symbol) return res.status(400).json({ success: false, message: 'A valid stock symbol is required' });
     const target = Number(targetPrice);
     const cond = condition ? condition.toUpperCase() : 'ABOVE';
 

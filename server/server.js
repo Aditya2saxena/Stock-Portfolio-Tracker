@@ -8,6 +8,7 @@ const connectDB = require('./src/config/db');
 const { getStockPrice } = require('./src/services/stockService');
 const { checkPriceAlerts } = require('./src/services/alertService');
 const { normalizeSymbol } = require('./src/utils/symbolNormalizer');
+const jwt = require('jsonwebtoken');
 
 const PORT = process.env.PORT || 5000;
 
@@ -31,8 +32,20 @@ const io = new Server(server, {
 app.set('io', io);
 
 // Global active symbols pool subscribed by connected clients or defaults
-const defaultSymbols = new Set(['AAPL', 'RELIANCE', 'TCS', 'MSFT', 'INFY', 'TSLA', 'AMZN']);
+const defaultSymbols = new Set(['AAPL', 'RELIANCE', 'TCS', 'MSFT', 'INFY', 'TSLA', 'AMZN'].map((symbol) => normalizeSymbol(symbol).normalizedSymbol));
 const socketSubscriptions = new Map(); // socket.id -> Set of symbols
+
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('Authentication required'));
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.data.userId = String(decoded.id);
+    return next();
+  } catch (error) {
+    return next(new Error('Invalid or expired authentication token'));
+  }
+});
 
 const getActiveSymbols = () => {
   const active = new Set(defaultSymbols);
@@ -47,16 +60,20 @@ const getActiveSymbols = () => {
 // Client socket connection & subscription handling
 io.on('connection', (socket) => {
   console.log('🔌 New client connected:', socket.id);
+  socket.join(`user:${socket.data.userId}`);
   socketSubscriptions.set(socket.id, new Set());
 
   // Subscribe to specific stock symbols
   socket.on('subscribe:symbols', (symbols) => {
     if (Array.isArray(symbols)) {
       const clientSet = socketSubscriptions.get(socket.id) || new Set();
-      symbols.forEach((sym) => {
+      symbols.slice(0, 100).forEach((sym) => {
         if (typeof sym === 'string' && sym.trim()) {
           const norm = normalizeSymbol(sym.trim());
-          if (norm.displaySymbol) clientSet.add(norm.displaySymbol);
+          if (norm.normalizedSymbol) {
+            clientSet.add(norm.normalizedSymbol);
+            socket.join(`user:${socket.data.userId}:symbol:${norm.normalizedSymbol}`);
+          }
         }
       });
       socketSubscriptions.set(socket.id, clientSet);
@@ -72,7 +89,8 @@ io.on('connection', (socket) => {
         symbols.forEach((sym) => {
           if (typeof sym === 'string' && sym.trim()) {
             const norm = normalizeSymbol(sym.trim());
-            clientSet.delete(norm.displaySymbol);
+            clientSet.delete(norm.normalizedSymbol);
+            socket.leave(`user:${socket.data.userId}:symbol:${norm.normalizedSymbol}`);
           }
         });
       }
@@ -92,8 +110,18 @@ const sendStockUpdates = async () => {
     try {
       const stockData = await getStockPrice(symbol);
 
-      if (stockData && stockData.currentPrice > 0) {
-        io.emit('priceUpdate', stockData);
+      if (stockData && stockData.currentPrice > 0 && stockData.dataSource !== 'demo') {
+        const canonicalSymbol = stockData.fullSymbol || normalizeSymbol(symbol).normalizedSymbol;
+        const recipients = new Set();
+        for (const [socketId, subscriptions] of socketSubscriptions.entries()) {
+          if (subscriptions.has(canonicalSymbol)) {
+            const connectedSocket = io.sockets.sockets.get(socketId);
+            if (connectedSocket) recipients.add(connectedSocket.data.userId);
+          }
+        }
+        recipients.forEach((userId) => {
+          io.to(`user:${userId}:symbol:${canonicalSymbol}`).emit('priceUpdate', stockData);
+        });
         console.log(`📡 Broadcast update for ${symbol}: ${stockData.currency === 'INR' ? '₹' : '$'}${stockData.currentPrice} (${stockData.dataSource})`);
 
         // Check active price alerts for this stock

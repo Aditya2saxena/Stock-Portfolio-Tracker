@@ -1,4 +1,5 @@
-import { createContext, useState, useContext } from 'react';
+import { createContext, useState, useContext, useEffect } from 'react';
+import socket from '../socket';
 
 const AuthContext = createContext();
 
@@ -16,6 +17,17 @@ export const AuthProvider = ({ children }) => {
       return null;
     }
   });
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (!user || !token) {
+      socket.disconnect();
+      return;
+    }
+    socket.auth = { token };
+    socket.connect();
+    return () => socket.disconnect();
+  }, [user]);
 
   const login = (userData, token) => {
     localStorage.setItem('token', token);

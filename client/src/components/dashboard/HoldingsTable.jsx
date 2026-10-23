@@ -2,10 +2,13 @@ import React from 'react';
 import { Trash2, TrendingUp, TrendingDown, Layers } from 'lucide-react';
 
 const HoldingsTable = ({ portfolio = [], onDelete, loading, showAllocation = false }) => {
-  const totalCurrentValue = portfolio.reduce(
-    (total, item) => total + Number(item.currentValue || 0),
-    0
-  );
+  const currentValueByCurrency = portfolio.reduce((totals, item) => {
+    if (item.currentValue !== null && item.currentValue !== undefined) {
+      const currency = item.currency || (item.stockSymbol?.endsWith('.NS') ? 'INR' : 'USD');
+      totals[currency] = (totals[currency] || 0) + Number(item.currentValue);
+    }
+    return totals;
+  }, {});
   const getBadgeClass = (source) => {
     switch (source) {
       case 'live':
@@ -77,12 +80,14 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading, showAllocation = fal
               const currentPrice = item.currentPrice !== null && item.currentPrice !== undefined ? Number(item.currentPrice) : null;
               const quantity = Number(item.quantity || 0);
               const investment = item.investment ? Number(item.investment) : buyPrice * quantity;
-              const currentValue = currentPrice !== null ? currentPrice * quantity : 0;
-              const profitLoss = currentPrice !== null ? currentValue - investment : 0;
-              const percentageReturn = item.percentageReturn !== undefined ? item.percentageReturn : (investment > 0 ? ((profitLoss / investment) * 100).toFixed(2) : '0.00');
+              const currentValue = currentPrice !== null ? currentPrice * quantity : null;
+              const profitLoss = currentValue !== null ? currentValue - investment : null;
+              const percentageReturn = item.percentageReturn !== undefined ? item.percentageReturn : (currentValue !== null && investment > 0 ? ((profitLoss / investment) * 100).toFixed(2) : null);
 
               const isPositive = Number(profitLoss) >= 0;
-              const allocation = totalCurrentValue > 0 ? (currentValue / totalCurrentValue) * 100 : 0;
+              const currency = item.currency || (item.stockSymbol?.endsWith('.NS') ? 'INR' : 'USD');
+              const currencyTotal = currentValueByCurrency[currency] || 0;
+              const allocation = currencyTotal > 0 && currentValue !== null ? (currentValue / currencyTotal) * 100 : null;
 
               return (
                 <tr key={item._id}>
@@ -124,7 +129,7 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading, showAllocation = fal
 
                   {/* Current Value */}
                   <td style={{ fontWeight: '700', color: 'var(--text-main)' }}>
-                    {currSym}{currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {currentValue === null ? 'N/A' : `${currSym}${currentValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                   </td>
 
                   {/* P/L */}
@@ -135,11 +140,10 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading, showAllocation = fal
                         color: isPositive ? 'var(--color-positive)' : 'var(--color-negative)',
                       }}
                     >
-                      {isPositive ? `+${currSym}` : `-${currSym}`}
-                      {Math.abs(profitLoss).toLocaleString('en-US', {
+                      {profitLoss === null ? 'N/A' : `${isPositive ? `+${currSym}` : `-${currSym}`}${Math.abs(profitLoss).toLocaleString('en-US', {
                         minimumFractionDigits: 2,
                         maximumFractionDigits: 2,
-                      })}
+                      })}`}
                     </span>
                   </td>
 
@@ -152,15 +156,13 @@ const HoldingsTable = ({ portfolio = [], onDelete, loading, showAllocation = fal
                         color: isPositive ? 'var(--color-positive)' : 'var(--color-negative)',
                       }}
                     >
-                      {isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                      {isPositive ? '+' : ''}
-                      {percentageReturn}%
+                      {percentageReturn === null ? 'N/A' : <>{isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}{isPositive ? '+' : ''}{percentageReturn}%</>}
                     </span>
                   </td>
 
                   {showAllocation && (
                     <td style={{ fontWeight: '600', color: 'var(--text-main)' }}>
-                      {allocation.toFixed(2)}%
+                      {allocation === null ? 'N/A' : `${allocation.toFixed(2)}%`}
                     </td>
                   )}
 

@@ -52,16 +52,20 @@ function Watchlist() {
     fetchWatchlistData(true);
   }, [fetchWatchlistData]);
 
+  const watchlistSymbolsKey = watchlist.map((item) => item.stockSymbol).sort().join('|');
+
   // Socket subscription for symbols in watchlist
   useEffect(() => {
-    if (watchlist.length === 0) return;
-    const symbols = watchlist.map((item) => item.stockSymbol);
-    socket.emit('subscribe:symbols', symbols);
+    const symbols = watchlistSymbolsKey ? watchlistSymbolsKey.split('|') : [];
+    if (symbols.length === 0) return;
+    const subscribe = () => socket.emit('subscribe:symbols', symbols);
+    socket.on('connect', subscribe);
+    if (socket.connected) subscribe();
 
     const handlePriceUpdate = (updatedStock) => {
       setWatchlist((prev) =>
         prev.map((item) => {
-          if (item.stockSymbol.toUpperCase() === updatedStock.symbol.toUpperCase()) {
+          if (item.stockSymbol.toUpperCase() === updatedStock.symbol?.toUpperCase() || item.stockSymbol.toUpperCase() === updatedStock.fullSymbol?.toUpperCase()) {
             return {
               ...item,
               currentPrice: updatedStock.currentPrice,
@@ -78,10 +82,11 @@ function Watchlist() {
     socket.on('priceUpdate', handlePriceUpdate);
 
     return () => {
-      socket.emit('unsubscribe:symbols', symbols);
+      socket.off('connect', subscribe);
+      if (socket.connected) socket.emit('unsubscribe:symbols', symbols);
       socket.off('priceUpdate', handlePriceUpdate);
     };
-  }, [watchlist]);
+  }, [watchlistSymbolsKey]);
 
   const handleAdd = async (e) => {
     e.preventDefault();

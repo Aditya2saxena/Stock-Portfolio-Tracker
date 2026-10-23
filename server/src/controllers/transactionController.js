@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Transaction = require('../models/Transaction');
 const Portfolio = require('../models/Portfolio');
+const { normalizeSymbol } = require('../utils/symbolNormalizer');
 
 // Create Transaction (BUY / SELL)
 exports.createTransaction = async (req, res) => {
@@ -11,7 +12,11 @@ exports.createTransaction = async (req, res) => {
       return res.status(400).json({ message: 'Stock symbol is required' });
     }
 
-    const symbol = stockSymbol.toUpperCase().trim();
+    const symbolInfo = normalizeSymbol(stockSymbol);
+    const symbol = symbolInfo.normalizedSymbol;
+    if (!symbol || symbol.length > 24) {
+      return res.status(400).json({ message: 'Provide a valid stock symbol' });
+    }
     const qty = Number(quantity);
     const prc = Number(price);
     const txType = type ? type.toUpperCase() : 'BUY';
@@ -31,59 +36,64 @@ exports.createTransaction = async (req, res) => {
     const totalAmount = parseFloat((qty * prc).toFixed(2));
     const userId = req.user.id;
 
-    // Handle Portfolio update based on transaction type
-    if (txType === 'BUY') {
-      const existing = await Portfolio.findOne({ userId, stockSymbol: symbol });
+    // Keep the holding and immutable ledger entry in one atomic DB transaction.
+    const session = await mongoose.startSession();
+    let transaction;
+    try {
+      await session.withTransaction(async () => {
+        if (txType === 'BUY') {
+          const symbolMatches = [symbol, symbolInfo.displaySymbol];
+          const existing = await Portfolio.findOne({ userId, stockSymbol: { $in: symbolMatches } }).session(session);
+          if (existing) {
+            existing.stockSymbol = symbol;
+            const oldInvestment = existing.buyPrice * existing.quantity;
+            const totalQuantity = existing.quantity + qty;
+            existing.quantity = totalQuantity;
+            existing.buyPrice = Number(((oldInvestment + prc * qty) / totalQuantity).toFixed(2));
+            await existing.save({ session });
+          } else {
+            await Portfolio.create([{
+              userId,
+              stockSymbol: symbol,
+              quantity: qty,
+              buyPrice: prc,
+            }], { session });
+          }
+        } else {
+          const holding = await Portfolio.findOne({ userId, stockSymbol: { $in: [symbol, symbolInfo.displaySymbol] } }).session(session);
+          if (!holding) {
+            const error = new Error(`Cannot sell ${symbol}: stock does not exist in your portfolio`);
+            error.statusCode = 400;
+            throw error;
+          }
+          if (holding.quantity < qty) {
+            const error = new Error(`Insufficient shares: you own ${holding.quantity} shares of ${symbol}, but tried to sell ${qty}`);
+            error.statusCode = 400;
+            throw error;
+          }
+          if (holding.quantity === qty) {
+            await Portfolio.deleteOne({ _id: holding._id }, { session });
+          } else {
+            holding.stockSymbol = symbol;
+            holding.quantity -= qty;
+            await holding.save({ session });
+          }
+        }
 
-      if (existing) {
-        const oldInvestment = existing.buyPrice * existing.quantity;
-        const newInvestment = prc * qty;
-        const totalQuantity = existing.quantity + qty;
-        const avgBuyPrice = parseFloat(((oldInvestment + newInvestment) / totalQuantity).toFixed(2));
-
-        existing.quantity = totalQuantity;
-        existing.buyPrice = avgBuyPrice;
-        await existing.save();
-      } else {
-        await Portfolio.create({
+        const [created] = await Transaction.create([{
           userId,
           stockSymbol: symbol,
+          currency: symbolInfo.currency,
+          type: txType,
           quantity: qty,
-          buyPrice: prc,
-        });
-      }
-    } else if (txType === 'SELL') {
-      const holding = await Portfolio.findOne({ userId, stockSymbol: symbol });
-
-      if (!holding) {
-        return res.status(400).json({
-          message: `Cannot sell ${symbol}: Stock does not exist in your portfolio`,
-        });
-      }
-
-      if (holding.quantity < qty) {
-        return res.status(400).json({
-          message: `Insufficient shares: You own ${holding.quantity} shares of ${symbol}, but tried to sell ${qty}`,
-        });
-      }
-
-      if (holding.quantity === qty) {
-        await Portfolio.deleteOne({ _id: holding._id });
-      } else {
-        holding.quantity = holding.quantity - qty;
-        await holding.save();
-      }
+          price: prc,
+          totalAmount,
+        }], { session });
+        transaction = created;
+      });
+    } finally {
+      await session.endSession();
     }
-
-    // Record Transaction in Database
-    const transaction = await Transaction.create({
-      userId,
-      stockSymbol: symbol,
-      type: txType,
-      quantity: qty,
-      price: prc,
-      totalAmount,
-    });
 
     res.status(201).json({
       message: `${txType} transaction successful for ${symbol}`,
@@ -91,7 +101,7 @@ exports.createTransaction = async (req, res) => {
     });
   } catch (error) {
     console.error('Transaction creation error:', error);
-    res.status(500).json({ message: error.message || 'Transaction failed' });
+    res.status(error.statusCode || 500).json({ message: error.message || 'Transaction failed' });
   }
 };
 
@@ -106,7 +116,8 @@ exports.getTransactions = async (req, res) => {
     }
 
     if (stockSymbol) {
-      filter.stockSymbol = stockSymbol.toUpperCase().trim();
+      const normalized = normalizeSymbol(stockSymbol);
+      filter.stockSymbol = { $in: [normalized.normalizedSymbol, normalized.displaySymbol] };
     }
 
     const query = Transaction.find(filter).sort({ createdAt: -1 });
@@ -144,24 +155,4 @@ exports.getTransactionById = async (req, res) => {
   }
 };
 
-// Delete Transaction
-exports.deleteTransaction = async (req, res) => {
-  try {
-    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
-      return res.status(400).json({ message: 'Invalid transaction ID format' });
-    }
-
-    const transaction = await Transaction.findOneAndDelete({
-      _id: req.params.id,
-      userId: req.user.id,
-    });
-
-    if (!transaction) {
-      return res.status(404).json({ message: 'Transaction not found' });
-    }
-
-    res.json({ message: 'Transaction deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+// Transaction records are immutable; corrections should be represented by a new transaction.

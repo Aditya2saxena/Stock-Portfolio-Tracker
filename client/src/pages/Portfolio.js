@@ -8,6 +8,7 @@ import HoldingsTable from '../components/dashboard/HoldingsTable';
 import TransactionModal from '../components/modals/TransactionModal';
 import EmptyState from '../components/common/EmptyState';
 import { SummaryCardSkeleton, TableSkeleton } from '../components/common/LoadingSkeleton';
+import { getPortfolioTotalsByCurrency } from '../utils/portfolioTotals';
 
 function Portfolio() {
   const [portfolio, setPortfolio] = useState([]);
@@ -35,11 +36,14 @@ function Portfolio() {
   }, [loadPortfolio]);
 
   const totals = useMemo(() => {
-    const invested = portfolio.reduce((sum, item) => sum + Number(item.investment || 0), 0);
-    const currentValue = portfolio.reduce((sum, item) => sum + Number(item.currentValue || 0), 0);
-    const profitLoss = currentValue - invested;
-    const returnPercentage = invested > 0 ? (profitLoss / invested) * 100 : 0;
-    return { invested, currentValue, profitLoss, returnPercentage };
+    const byCurrency = getPortfolioTotalsByCurrency(portfolio);
+    return Object.fromEntries(Object.entries(byCurrency).map(([currency, bucket]) => [currency, {
+      invested: bucket.investment,
+      currentValue: bucket.currentValue,
+      profitLoss: bucket.profitLoss,
+      pricedInvestment: bucket.pricedInvestment,
+      returnPercentage: bucket.pricedInvestment > 0 ? (bucket.profitLoss / bucket.pricedInvestment) * 100 : 0,
+    }]));
   }, [portfolio]);
 
   const handleDelete = async (id, symbol) => {
@@ -85,10 +89,10 @@ function Portfolio() {
           <><SummaryCardSkeleton /><SummaryCardSkeleton /><SummaryCardSkeleton /><SummaryCardSkeleton /></>
         ) : (
           <>
-            <SummaryCard title="Total Invested" value={totals.invested} icon={Wallet} />
-            <SummaryCard title="Current Value" value={totals.currentValue} icon={Landmark} />
-            <SummaryCard title="Total P/L" value={totals.profitLoss} isProfitLoss isPositive={totals.profitLoss >= 0} icon={TrendingUp} />
-            <SummaryCard title="Overall Return" value={totals.returnPercentage} isCurrency={false} percentChange={totals.returnPercentage} isPositive={totals.returnPercentage >= 0} icon={TrendingUp} />
+            <SummaryCard title="Total Invested" value={Object.fromEntries(Object.entries(totals).map(([currency, value]) => [currency, value.invested]))} icon={Wallet} />
+            <SummaryCard title="Current Value" value={Object.fromEntries(Object.entries(totals).filter(([, value]) => value.pricedInvestment > 0).map(([currency, value]) => [currency, value.currentValue]))} icon={Landmark} />
+            <SummaryCard title="P/L (priced holdings)" value={Object.fromEntries(Object.entries(totals).filter(([, value]) => value.pricedInvestment > 0).map(([currency, value]) => [currency, value.profitLoss]))} isProfitLoss icon={TrendingUp} />
+            <SummaryCard title="Return (priced holdings)" value={Object.fromEntries(Object.entries(totals).filter(([, value]) => value.pricedInvestment > 0).map(([currency, value]) => [currency, `${value.returnPercentage >= 0 ? '+' : ''}${value.returnPercentage.toFixed(2)}%`]))} isCurrency={false} icon={TrendingUp} />
           </>
         )}
       </div>

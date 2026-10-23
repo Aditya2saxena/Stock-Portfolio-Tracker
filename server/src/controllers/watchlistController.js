@@ -1,14 +1,18 @@
 const Watchlist = require('../models/Watchlist');
 const { getStockPrice } = require('../services/stockService');
+const { normalizeSymbol } = require('../utils/symbolNormalizer');
 
 // Add stock to watchlist
 exports.addToWatchlist = async (req, res) => {
   try {
     const { stockSymbol } = req.body;
+    const symbol = normalizeSymbol(stockSymbol).normalizedSymbol;
+    if (!symbol) return res.status(400).json({ message: 'A valid stock symbol is required' });
 
+    const displaySymbol = normalizeSymbol(stockSymbol).displaySymbol;
     const exists = await Watchlist.findOne({
       userId: req.user.id,
-      stockSymbol: stockSymbol.toUpperCase(),
+      stockSymbol: { $in: [symbol, displaySymbol] },
     });
 
     if (exists) {
@@ -17,7 +21,7 @@ exports.addToWatchlist = async (req, res) => {
 
     const watchlistItem = await Watchlist.create({
       userId: req.user.id,
-      stockSymbol: stockSymbol.toUpperCase(),
+      stockSymbol: symbol,
     });
 
     res.status(201).json(watchlistItem);
@@ -74,7 +78,7 @@ exports.removeFromWatchlist = async (req, res) => {
   try {
     const watchlistItem = await Watchlist.findOneAndDelete({
       userId: req.user.id,
-      stockSymbol: req.params.symbol.toUpperCase(),
+      stockSymbol: { $in: [normalizeSymbol(req.params.symbol).normalizedSymbol, normalizeSymbol(req.params.symbol).displaySymbol] },
     });
 
     if (!watchlistItem) {

@@ -14,6 +14,8 @@ A full-stack stock portfolio management application built with the **MERN stack*
 - **Market quotes and charts** — quote details and historical chart ranges from `1D` to `1Y`.
 - **Portfolio management** — add, update, and remove holdings; repeated additions merge into the holding using weighted-average cost basis.
 - **Buy and sell ledger** — record transactions and update holdings when a transaction is created.
+- **Immutable transaction history** — transaction records cannot be deleted; record a correcting BUY/SELL instead.
+- **Currency-aware portfolio totals** — INR and USD holdings, P/L, allocation charts, and snapshots are shown in separate currency groups without adding unlike currencies.
 - **Watchlist and price alerts** — track symbols and configure price targets with in-app notifications.
 - **Analytics and snapshots** — view portfolio value history based on saved portfolio snapshots.
 - **Authentication** — registration, login, and protected portfolio features.
@@ -34,8 +36,8 @@ A full-stack stock portfolio management application built with the **MERN stack*
 1. A user registers or logs in. The client stores the JWT and sends it with protected API requests.
 2. The API reads and updates user data in MongoDB. Protected data includes holdings, transactions, watchlists, alerts, notifications, and portfolio snapshots.
 3. For quotes, the backend checks its in-memory cache, then requests market data. If the provider request fails, it tries stale cached data, then a demo quote for supported symbols; otherwise it reports an error.
-4. The dashboard and stock pages subscribe to symbols over Socket.IO. The server polls quotes every three minutes for a set containing default symbols and client subscriptions, then broadcasts `priceUpdate` events to connected clients.
-5. Portfolio snapshots are saved at most once per minute per user and power the portfolio history views.
+4. The dashboard and stock pages authenticate and subscribe to symbols over Socket.IO. The server polls quotes every three minutes for default symbols and active subscriptions, then sends `priceUpdate` events to the subscribing user's symbol room.
+5. Portfolio snapshots are calculated by the backend from stored holdings and available quotes, saved at most once per minute per user, and grouped by currency for portfolio history views.
 
 ## Architecture
 
@@ -74,12 +76,12 @@ Create `server/.env`:
 
 ```env
 PORT=5000
-MONGO_URI=mongodb://127.0.0.1:27017/stock-portfolio-tracker
+MONGO_URI=mongodb://127.0.0.1:27017/stock-portfolio-tracker?replicaSet=rs0
 JWT_SECRET=replace-with-a-long-random-secret
 CLIENT_URL=http://localhost:3000
 ```
 
-Set `MONGO_URI` to your MongoDB connection string. `CLIENT_URL` should be the frontend origin when running or deploying the app. Keep secrets in environment variables and do not commit `.env` files.
+Set `MONGO_URI` to your MongoDB connection string. BUY/SELL operations use MongoDB transactions, so the database must run as a replica set (MongoDB Atlas already provides this). For local MongoDB, configure `replication.replSetName: rs0` in `mongod.cfg`, restart MongoDB, run `rs.initiate()` once in `mongosh`, then use the URI shown above. `CLIENT_URL` should be the frontend origin when running or deploying the app. Keep secrets in environment variables and do not commit `.env` files.
 
 Start the API and Socket.IO server:
 
@@ -163,10 +165,10 @@ Main route groups:
 | --- | --- | --- |
 | `subscribe:symbols` | Client → server | Array of symbols to add to the polling pool |
 | `unsubscribe:symbols` | Client → server | Array of symbols to remove from that client's subscription set |
-| `priceUpdate` | Server → connected clients | Quote update broadcast during polling |
-| `priceAlertTriggered` | Server → connected clients | Triggered price-alert event |
+| `priceUpdate` | Server → subscribed user/symbol rooms | Quote update during polling |
+| `priceAlertTriggered` | Server → owning user's room | Triggered price-alert event |
 
-The server currently broadcasts quote and alert events to all connected clients. Do not treat the quote stream as exchange-grade tick data: updates are driven by a three-minute polling loop and depend on the upstream provider.
+The quote stream is not exchange-grade tick data: updates are driven by a three-minute polling loop and depend on the upstream provider. Socket.IO connections require the user's JWT.
 
 ## Market data and caching notes
 

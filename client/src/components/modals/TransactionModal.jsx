@@ -26,7 +26,7 @@ const TransactionModal = ({ isOpen, onClose, initialSymbol = '', initialPrice = 
   if (!isOpen) return null;
 
   // Detect currency based on symbol (Indian stocks get ₹, others get $)
-  const KNOWN_INDIAN = ['RELIANCE','TCS','INFY','HDFCBANK','ICICIBANK','TATAMOTORS','SBIN','WIPRO','BHARTIARTL','LT','ITC','AXISBANK','KOTAKBANK','MARUTI','NVDA'];
+  const KNOWN_INDIAN = ['RELIANCE','TCS','INFY','HDFCBANK','ICICIBANK','TATAMOTORS','SBIN','WIPRO','BHARTIARTL','LT','ITC','AXISBANK','KOTAKBANK','MARUTI'];
   const isIndian = /\.(NS|BO|BSE)$/i.test(stockSymbol) || KNOWN_INDIAN.includes(stockSymbol.toUpperCase());
   const currSymbol = isIndian ? '₹' : '$';
 

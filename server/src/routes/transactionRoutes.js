@@ -4,7 +4,6 @@ const {
   createTransaction,
   getTransactions,
   getTransactionById,
-  deleteTransaction,
 } = require('../controllers/transactionController');
 const authMiddleware = require('../middleware/authMiddleware');
 
@@ -14,6 +13,8 @@ router.use(authMiddleware);
 router.get('/', getTransactions);
 router.get('/:id', getTransactionById);
 router.post('/', createTransaction);
-router.delete('/:id', deleteTransaction);
+router.delete('/:id', (req, res) => res.status(405).json({
+  message: 'Transaction records are immutable. Create a correcting transaction instead.',
+}));
 
 module.exports = router;

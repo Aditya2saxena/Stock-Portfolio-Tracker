@@ -9,6 +9,7 @@ import { getTransactions } from '../api/transactionService';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import socket from '../socket';
+import { getPortfolioTotalsByCurrency } from '../utils/portfolioTotals';
 
 import Layout from '../components/layout/Layout';
 import SummaryCard from '../components/dashboard/SummaryCard';
@@ -87,13 +88,17 @@ function Dashboard() {
       });
   }, [fetchDashboardData]);
 
-  // Socket.io real-time updates — subscribe portfolio symbols
+  const portfolioSymbolsKey = portfolio.map((item) => item.stockSymbol).sort().join('|');
+
+  // Socket.io updates are scoped to this user's subscribed symbols.
   useEffect(() => {
-    if (portfolio.length === 0) return;
+    const symbols = portfolioSymbolsKey ? portfolioSymbolsKey.split('|') : [];
+    if (symbols.length === 0) return;
 
     // Notify server which symbols we need updates for
-    const symbols = portfolio.map((item) => item.stockSymbol);
-    socket.emit('subscribe:symbols', symbols);
+    const subscribe = () => socket.emit('subscribe:symbols', symbols);
+    socket.on('connect', subscribe);
+    if (socket.connected) subscribe();
 
     const handlePriceUpdate = (updatedStock) => {
       setPortfolio((prevPortfolio) =>
@@ -130,33 +135,34 @@ function Dashboard() {
     socket.on('priceUpdate', handlePriceUpdate);
 
     return () => {
+      socket.off('connect', subscribe);
+      if (socket.connected) socket.emit('unsubscribe:symbols', symbols);
       socket.off('priceUpdate', handlePriceUpdate);
     };
-  }, [portfolio.length]);
+  }, [portfolioSymbolsKey]);
 
   // Calculations
-  const totalInvestment = useMemo(() => {
-    return portfolio.reduce((sum, item) => sum + Number(item.investment || 0), 0);
-  }, [portfolio]);
-
-  const totalCurrentValue = useMemo(() => {
-    return portfolio.reduce((sum, item) => sum + Number(item.currentValue || 0), 0);
-  }, [portfolio]);
-
-  const totalProfitLoss = useMemo(() => {
-    return totalCurrentValue - totalInvestment;
-  }, [totalCurrentValue, totalInvestment]);
-
-  const overallReturnPercent = useMemo(() => {
-    return totalInvestment > 0 ? (totalProfitLoss / totalInvestment) * 100 : 0;
-  }, [totalProfitLoss, totalInvestment]);
+  const currencyTotals = useMemo(() => getPortfolioTotalsByCurrency(portfolio), [portfolio]);
+  const totalInvestment = useMemo(() => Object.fromEntries(Object.entries(currencyTotals).map(([currency, totals]) => [currency, totals.investment])), [currencyTotals]);
+  const totalCurrentValue = useMemo(() => Object.fromEntries(Object.entries(currencyTotals).filter(([, totals]) => totals.pricedInvestment > 0).map(([currency, totals]) => [currency, totals.currentValue])), [currencyTotals]);
+  const totalProfitLoss = useMemo(() => Object.fromEntries(Object.entries(currencyTotals).filter(([, totals]) => totals.pricedInvestment > 0).map(([currency, totals]) => [currency, totals.profitLoss])), [currencyTotals]);
+  const overallReturnPercent = useMemo(() => Object.fromEntries(Object.entries(currencyTotals).map(([currency, totals]) => [
+    currency,
+    totals.pricedInvestment > 0 ? (totals.profitLoss / totals.pricedInvestment) * 100 : 0,
+  ])), [currencyTotals]);
 
   // Today's P/L calculation from intraday snapshots
   const todaysPL = useMemo(() => {
-    if (valueHistory.length < 2) return null;
-    const firstToday = valueHistory[0].value;
-    const latestToday = valueHistory[valueHistory.length - 1].value;
-    return latestToday - firstToday;
+    const today = new Date().toDateString();
+    const pointsToday = valueHistory.filter((point) => point.date && new Date(point.date).toDateString() === today);
+    if (pointsToday.length < 2) return null;
+    const first = pointsToday[0].totalsByCurrency;
+    const latest = pointsToday[pointsToday.length - 1].totalsByCurrency;
+    if (!first || !latest) return null;
+    return Object.fromEntries(Array.from(new Set([...Object.keys(first), ...Object.keys(latest)])).map((currency) => [
+      currency,
+      Number(latest[currency] || 0) - Number(first[currency] || 0),
+    ]));
   }, [valueHistory]);
 
   const { bestPerformer, worstPerformer } = useMemo(() => {
@@ -183,32 +189,29 @@ function Dashboard() {
     score += Math.min(20, portfolio.length * 4);
 
     // Performance factor
-    if (overallReturnPercent > 0) {
-      score += Math.min(20, overallReturnPercent);
-    } else {
-      score += Math.max(-20, overallReturnPercent);
-    }
+    const returns = Object.values(overallReturnPercent);
+    const averageReturn = returns.length ? returns.reduce((sum, value) => sum + value, 0) / returns.length : 0;
+    score += averageReturn > 0 ? Math.min(20, averageReturn) : Math.max(-20, averageReturn);
 
     // Concentration penalty/bonus using HHI
-    if (totalCurrentValue > 0) {
-      let hhi = 0;
-      portfolio.forEach((p) => {
-        const w = Number(p.currentValue || 0) / totalCurrentValue;
-        hhi += w * w;
-      });
-      score += Math.round((1 - hhi) * 10);
-    }
+    const currencyHhis = Object.keys(currencyTotals).map((currency) => {
+      const bucket = portfolio.filter((item) => (item.currency || 'USD') === currency && Number(item.currentValue) > 0);
+      const total = bucket.reduce((sum, item) => sum + Number(item.currentValue), 0);
+      return total ? bucket.reduce((sum, item) => sum + (Number(item.currentValue) / total) ** 2, 0) : null;
+    }).filter((value) => value !== null);
+    if (currencyHhis.length) score += Math.round((1 - currencyHhis.reduce((sum, value) => sum + value, 0) / currencyHhis.length) * 10);
 
     return Math.min(100, Math.max(0, Math.round(score)));
-  }, [portfolio, overallReturnPercent, totalCurrentValue]);
+  }, [portfolio, overallReturnPercent, currencyTotals]);
 
   // Snapshot persistence
   useEffect(() => {
-    if (totalCurrentValue <= 0) return;
+    if (!Object.values(totalCurrentValue).some((value) => value > 0)) return;
 
     const newPoint = {
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      value: Number(totalCurrentValue.toFixed(2)),
+      date: new Date().toISOString(),
+      totalsByCurrency: Object.fromEntries(Object.entries(totalCurrentValue).map(([currency, value]) => [currency, Number(value.toFixed(2))])),
     };
 
     setValueHistory((prev) => {
@@ -216,14 +219,10 @@ function Dashboard() {
       return updated.slice(-20);
     });
 
-    saveSnapshot({
-      totalInvestment: Number(totalInvestment.toFixed(2)),
-      totalCurrentValue: Number(totalCurrentValue.toFixed(2)),
-      totalProfitLoss: Number(totalProfitLoss.toFixed(2)),
-    }).catch((err) => {
+    saveSnapshot().catch((err) => {
       console.error('Failed to save snapshot:', err);
     });
-  }, [totalCurrentValue, totalInvestment, totalProfitLoss]);
+  }, [totalCurrentValue]);
 
   const handleOpenTransactionModal = (type = 'BUY', symbol = '', price = '') => {
     setModalType(type);
@@ -300,8 +299,8 @@ function Dashboard() {
           <>
             <SummaryCard title="Total Invested" value={totalInvestment} icon={Wallet} />
             <SummaryCard title="Current Value" value={totalCurrentValue} icon={DollarSign} />
-            <SummaryCard title="Total P/L" value={totalProfitLoss} isProfitLoss={true} isPositive={totalProfitLoss >= 0} icon={TrendingUp} />
-            <SummaryCard title="Overall Return" value={overallReturnPercent} isCurrency={false} percentChange={overallReturnPercent} isPositive={overallReturnPercent >= 0} icon={Percent} />
+            <SummaryCard title="P/L (priced holdings)" value={totalProfitLoss} isProfitLoss icon={TrendingUp} />
+            <SummaryCard title="Return (priced holdings)" value={Object.fromEntries(Object.entries(overallReturnPercent).filter(([currency]) => currencyTotals[currency]?.pricedInvestment > 0).map(([currency, value]) => [currency, `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`]))} isCurrency={false} icon={Percent} />
           </>
         )}
       </div>
@@ -316,8 +315,8 @@ function Dashboard() {
               <Activity size={18} color="var(--color-accent)" />
             </div>
             {todaysPL !== null ? (
-              <div style={{ fontSize: '1.5rem', fontWeight: '800', color: todaysPL >= 0 ? 'var(--color-positive)' : 'var(--color-negative)' }}>
-                {todaysPL >= 0 ? '+₹' : '-₹'}{Math.abs(todaysPL).toFixed(2)}
+              <div style={{ fontSize: '1.1rem', fontWeight: '800', display: 'grid', gap: '0.2rem' }}>
+                {Object.entries(todaysPL).map(([currency, value]) => <span key={currency} style={{ color: value >= 0 ? 'var(--color-positive)' : 'var(--color-negative)' }}>{currency} {value >= 0 ? '+' : '-'}{Math.abs(value).toFixed(2)}</span>)}
               </div>
             ) : (
               <div style={{ fontSize: '0.85rem', color: 'var(--text-subtle)', fontStyle: 'italic' }}>
