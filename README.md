@@ -81,7 +81,7 @@ JWT_SECRET=replace-with-a-long-random-secret
 CLIENT_URL=http://localhost:3000
 ```
 
-Set `MONGO_URI` to your MongoDB connection string. BUY/SELL operations use MongoDB transactions, so the database must run as a replica set (MongoDB Atlas already provides this). For local MongoDB, configure `replication.replSetName: rs0` in `mongod.cfg`, restart MongoDB, run `rs.initiate()` once in `mongosh`, then use the URI shown above. `CLIENT_URL` should be the frontend origin when running or deploying the app. Keep secrets in environment variables and do not commit `.env` files.
+Set `MONGO_URI` to your MongoDB connection string. BUY/SELL operations use MongoDB transactions, so the database must run as a replica set (MongoDB Atlas already provides this). For local MongoDB, configure `replication.replSetName: rs0` in `mongod.cfg`, restart MongoDB, run `rs.initiate()` once in `mongosh`, then use the URI shown above. `CLIENT_URL` should be the frontend origin when running or deploying the app. Set `CORS_ORIGINS` to a comma-separated list to allow additional deployed frontend origins. Keep secrets in environment variables and do not commit `.env` files.
 
 Start the API and Socket.IO server:
 

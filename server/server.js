@@ -9,6 +9,7 @@ const { getStockPrice } = require('./src/services/stockService');
 const { checkPriceAlerts } = require('./src/services/alertService');
 const { normalizeSymbol } = require('./src/utils/symbolNormalizer');
 const jwt = require('jsonwebtoken');
+const allowedOrigins = require('./src/config/allowedOrigins');
 
 const PORT = process.env.PORT || 5000;
 
@@ -18,12 +19,7 @@ const server = http.createServer(app);
 // Production Socket.io CORS setup
 const io = new Server(server, {
   cors: {
-    origin: [
-      'http://localhost:3000',
-      'http://127.0.0.1:3000',
-      'https://stock-portfolio-tracker-bice.vercel.app',
-      process.env.CLIENT_URL,
-    ].filter(Boolean),
+    origin: [...allowedOrigins],
     methods: ['GET', 'POST'],
   },
 });

@@ -8,21 +8,14 @@ const watchlistRoutes = require('./routes/watchlistRoutes');
 const transactionRoutes = require('./routes/transactionRoutes');
 const alertRoutes = require('./routes/alertRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const allowedOrigins = require('./config/allowedOrigins');
 
 const app = express();
-
-// Production-ready CORS configuration
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-  'https://stock-portfolio-tracker-bice.vercel.app',
-].filter(Boolean);
 
 app.use(cors({
   origin(origin, callback) {
     // Requests from curl, monitoring, and same-origin deployments have no Origin header.
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (!origin || allowedOrigins.has(origin.replace(/\/$/, ''))) return callback(null, true);
     return callback(new Error('Origin is not allowed by CORS'));
   },
 }));
